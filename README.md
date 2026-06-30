@@ -48,11 +48,17 @@ python3 generate_attendance_summary.py
 
 ## Docker 部署
 
+复制环境变量示例并按需调整端口：
+
+```bash
+cp .env.example .env
+```
+
 ```bash
 docker compose up --build
 ```
 
-容器会在 `8001` 端口提供完整应用。镜像构建时会先编译前端 SPA，再由 FastAPI 同时提供 API 和静态资源：
+容器会在 `.env` 的 `APP_PORT` 端口提供完整应用。镜像构建时会先编译前端 SPA，再由 FastAPI 同时提供 API 和静态资源：
 
 ```text
 http://127.0.0.1:8001

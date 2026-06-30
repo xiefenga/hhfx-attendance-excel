@@ -1,6 +1,7 @@
 .mypy_cache/
 .pytest_cache/
 .venv/
+.env
 *.egg-info/
 __pycache__/
 *.pyc
