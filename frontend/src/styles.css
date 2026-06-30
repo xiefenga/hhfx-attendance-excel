@@ -1,0 +1,106 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f5f7fb;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: #f5f7fb;
+}
+
+.app-content {
+  width: min(900px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 32px 0;
+}
+
+.page-title {
+  margin-bottom: 20px;
+}
+
+.page-title h2 {
+  margin-bottom: 4px;
+}
+
+.workspace {
+  display: block;
+}
+
+.main-panel {
+  min-width: 0;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.flow-steps {
+  margin-bottom: 20px;
+}
+
+.upload-step {
+  min-height: 320px;
+}
+
+.upload-step .ant-result {
+  padding: 42px 16px;
+}
+
+.upload-result-icon {
+  color: #1677ff;
+}
+
+.upload-actions {
+  align-items: flex-start;
+}
+
+.action-row {
+  margin-bottom: 20px;
+}
+
+.generate-actions {
+  width: 100%;
+  justify-content: center;
+}
+
+.non-workday-row {
+  margin-bottom: 20px;
+  padding: 12px 0;
+  border-top: 1px solid #edf0f5;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.form-alert {
+  margin-bottom: 16px;
+}
+
+.ant-picker,
+.ant-input-number {
+  width: 100%;
+}
+
+@media (max-width: 860px) {
+  .app-content {
+    width: min(100vw - 24px, 720px);
+    padding: 20px 0;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
