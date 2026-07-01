@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, time
 from pathlib import Path
 
+from openpyxl import load_workbook
+
 from attendance_app.config import AttendanceConfig
 from attendance_app.processor import (
     assign_punch_base_date,
@@ -157,6 +159,56 @@ def test_weekend_day_type_uses_specific_weekday_name() -> None:
 
     assert any(row.work_date == date(2026, 6, 13) and row.day_type == "周六" for row in result.detail_rows)
     assert any(row.work_date == date(2026, 6, 14) and row.day_type == "周日" for row in result.detail_rows)
+
+
+def test_person_summary_splits_overtime_hours_by_day_type() -> None:
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    wb = load_workbook(result.output_path, data_only=True)
+    ws = wb["人员汇总"]
+
+    headers = [cell.value for cell in ws[1]]
+    assert headers[7:11] == [
+        "工作日加班时长",
+        "周末加班时长",
+        "节假日加班时长",
+        "本月加班时长合计",
+    ]
+
+    expected: dict[tuple[str, str, str], dict[str, float]] = {}
+    for row in result.detail_rows:
+        key = (row.name, row.department, row.employee_id)
+        person = expected.setdefault(
+            key,
+            {"workday": 0.0, "weekend": 0.0, "holiday": 0.0, "total": 0.0},
+        )
+        if row.overtime_hours <= 0:
+            continue
+        if row.day_type == "工作日":
+            person["workday"] += row.overtime_hours
+        elif row.day_type in {"周六", "周日"}:
+            person["weekend"] += row.overtime_hours
+        else:
+            person["holiday"] += row.overtime_hours
+        person["total"] += row.overtime_hours
+
+    actual_rows = {
+        (
+            str(row[0].value or ""),
+            str(row[1].value or ""),
+            str(row[2].value or ""),
+        ): row
+        for row in ws.iter_rows(min_row=2)
+    }
+    for key, values in expected.items():
+        if values["total"] == 0:
+            continue
+        row = actual_rows[key]
+        assert float(row[7].value or 0) == round(values["workday"], 2)
+        assert float(row[8].value or 0) == round(values["weekend"], 2)
+        assert float(row[9].value or 0) == round(values["holiday"], 2)
+        assert float(row[10].value or 0) == round(values["total"], 2)
+
+    wb.close()
 
 
 def test_parse_workbook_returns_detected_defaults() -> None:

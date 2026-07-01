@@ -319,6 +319,9 @@ def generate_summary(
                 "absence_dates": [],
                 "late_dates": [],
                 "meal_dates": [],
+                "workday_hours": 0.0,
+                "weekend_hours": 0.0,
+                "holiday_hours": 0.0,
                 "total_hours": 0.0,
                 "meal_count": 0,
             },
@@ -405,6 +408,12 @@ def generate_summary(
             summary = person_summary[key]
             if overtime_hours > 0:
                 summary["ot_dates"].append(f"{fmt_date(current_date)}加班{overtime_hours:g}小时")
+                if day_type == "工作日":
+                    summary["workday_hours"] = float(summary["workday_hours"]) + overtime_hours
+                elif day_type in {"周六", "周日"}:
+                    summary["weekend_hours"] = float(summary["weekend_hours"]) + overtime_hours
+                else:
+                    summary["holiday_hours"] = float(summary["holiday_hours"]) + overtime_hours
                 summary["total_hours"] = float(summary["total_hours"]) + overtime_hours
             if absence:
                 summary["absence_dates"].append(f"{fmt_date(current_date)}旷工")
@@ -497,12 +506,18 @@ def write_workbook(
             "旷工日期",
             "迟到日期",
             "餐补日期",
+            "工作日加班时长",
+            "周末加班时长",
+            "节假日加班时长",
             "本月加班时长合计",
             "餐补次数",
             "餐补金额合计",
         ]
     )
     for (name, department, employee_id), summary in sorted(person_summary.items()):
+        workday_hours = round(float(summary["workday_hours"]), 2)
+        weekend_hours = round(float(summary["weekend_hours"]), 2)
+        holiday_hours = round(float(summary["holiday_hours"]), 2)
         total_hours = round(float(summary["total_hours"]), 2)
         meal_count = int(summary["meal_count"])
         if total_hours == 0 and meal_count == 0 and not summary["absence_dates"] and not summary["late_dates"]:
@@ -516,16 +531,20 @@ def write_workbook(
                 "\n".join(summary["absence_dates"]),
                 "\n".join(summary["late_dates"]),
                 "\n".join(summary["meal_dates"]),
+                workday_hours,
+                weekend_hours,
+                holiday_hours,
                 total_hours,
                 meal_count,
                 meal_count * config.meal_allowance_amount,
             ]
         )
-    for cell in summary_ws["H"][1:]:
-        cell.number_format = "0.00"
-    for cell in summary_ws["I"][1:]:
+    for column in ("H", "I", "J", "K"):
+        for cell in summary_ws[column][1:]:
+            cell.number_format = "0.00"
+    for cell in summary_ws["L"][1:]:
         cell.number_format = "#,##0"
-    for cell in summary_ws["J"][1:]:
+    for cell in summary_ws["M"][1:]:
         cell.number_format = "#,##0"
     style_sheet(summary_ws, "A2")
 
