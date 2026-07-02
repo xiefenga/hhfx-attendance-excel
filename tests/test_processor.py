@@ -3,13 +3,16 @@ from __future__ import annotations
 from datetime import date, time
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from attendance_app.config import AttendanceConfig
 from attendance_app.processor import (
     assign_punch_base_date,
     expand_cell_timeline,
+    extract_times,
     generate_summary,
+    get_day_type,
+    is_holiday_header,
     parse_workbook,
     previous_day_is_incomplete,
 )
@@ -136,6 +139,10 @@ def test_same_cell_next_day_only_uses_trailing_early_off_work_punches() -> None:
     ]
 
 
+def test_extract_times_handles_adjacent_times_without_separator() -> None:
+    assert extract_times("08:3022:32外勤") == [time(8, 30), time(22, 32)]
+
+
 def test_weekend_single_punch_is_not_absent() -> None:
     result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
 
@@ -159,6 +166,48 @@ def test_weekend_day_type_uses_specific_weekday_name() -> None:
 
     assert any(row.work_date == date(2026, 6, 13) and row.day_type == "周六" for row in result.detail_rows)
     assert any(row.work_date == date(2026, 6, 14) and row.day_type == "周日" for row in result.detail_rows)
+
+
+def test_day_type_comes_from_header_for_makeup_workdays_and_rest_days() -> None:
+    assert get_day_type(date(2026, 6, 13), "13") == "工作日"
+    assert get_day_type(date(2026, 6, 10), "六") == "周六"
+    assert get_day_type(date(2026, 6, 10), "日") == "周日"
+    assert get_day_type(date(2026, 6, 10), "周末") == "周末"
+    assert get_day_type(date(2026, 6, 10), "周六") == "周六"
+    assert get_day_type(date(2026, 6, 10), "周日") == "周日"
+    assert get_day_type(date(2026, 6, 10), "法假") == "法假"
+    assert not is_holiday_header("周末")
+    assert is_holiday_header("法假")
+
+
+def test_summary_uses_header_not_weekday_for_makeup_workdays_and_rest_days() -> None:
+    source = ROOT / "outputs" / "tests" / "makeup-days.xlsx"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "考勤报表 2026-06-13 至 2026-06-15"
+    ws.cell(row=4, column=7, value="13")
+    ws.cell(row=4, column=8, value="周末")
+    ws.cell(row=4, column=9, value="法假")
+    ws.cell(row=5, column=1, value="测试员工")
+    ws.cell(row=5, column=3, value="测试部门")
+    ws.cell(row=5, column=4, value="001")
+    ws.cell(row=5, column=7, value="08:20")
+    ws.cell(row=5, column=8, value="18:00")
+    ws.cell(row=5, column=9, value="21:30")
+    wb.save(source)
+    wb.close()
+
+    result = generate_summary(source, ROOT / "outputs" / "tests", AttendanceConfig())
+    rows = {row.work_date: row for row in result.detail_rows}
+
+    assert rows[date(2026, 6, 13)].day_type == "工作日"
+    assert rows[date(2026, 6, 13)].absent
+    assert rows[date(2026, 6, 14)].day_type == "周末"
+    assert not rows[date(2026, 6, 14)].absent
+    assert rows[date(2026, 6, 14)].overtime_hours == 6.0
+    assert rows[date(2026, 6, 15)].day_type == "法假"
+    assert rows[date(2026, 6, 15)].overtime_hours == 8.0
 
 
 def test_person_summary_splits_overtime_hours_by_day_type() -> None:

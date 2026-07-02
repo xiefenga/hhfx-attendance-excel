@@ -22,19 +22,61 @@ from attendance_app.models import (
 
 
 STAT_MONTH = date(2026, 6, 1)
-TIME_RE = re.compile(r"(?<!\d)([0-2]?\d:[0-5]\d)(?!\d)")
+WEEKEND_HEADER_LABELS = {
+    "六": "周六",
+    "日": "周日",
+    "周六": "周六",
+    "周日": "周日",
+    "周末": "周末",
+}
+WEEKEND_DAY_TYPES = set(WEEKEND_HEADER_LABELS.values())
+
+
+def parse_time_at(
+    text: str, index: int, *, allow_leading_digit: bool = False
+) -> tuple[time, int] | None:
+    if index > 0 and text[index - 1].isdigit() and not allow_leading_digit:
+        return None
+
+    for hour_length in (2, 1):
+        colon_index = index + hour_length
+        minute_start = colon_index + 1
+        minute_end = minute_start + 2
+        if minute_end > len(text):
+            continue
+        if text[colon_index] != ":":
+            continue
+        hour_text = text[index:colon_index]
+        minute_text = text[minute_start:minute_end]
+        if not hour_text.isdigit() or not minute_text.isdigit():
+            continue
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if hour < 24 and minute < 60:
+            return time(hour, minute), minute_end
+    return None
 
 
 def extract_times(value: object) -> list[time]:
     if value is None:
         return []
+    text = str(value)
     times: list[time] = []
-    for raw in TIME_RE.findall(str(value)):
-        hour_s, minute_s = raw.split(":")
-        hour = int(hour_s)
-        minute = int(minute_s)
-        if hour < 24:
-            times.append(time(hour, minute))
+    index = 0
+    last_match_end = -1
+    while index < len(text):
+        candidate = parse_time_at(
+            text,
+            index,
+            allow_leading_digit=index == last_match_end,
+        )
+        if candidate is None:
+            index += 1
+            continue
+        punch_time, end = candidate
+        times.append(punch_time)
+        index = end
+        last_match_end = end
     return times
 
 
@@ -102,17 +144,17 @@ def parse_generated_at_date(ws: Any) -> date | None:
 
 def is_holiday_header(header: object) -> bool:
     text = str(header or "").strip()
-    return bool(text and not text.isdigit() and text not in {"六", "日"})
+    return bool(text and not text.isdigit() and text not in WEEKEND_HEADER_LABELS)
 
 
 def get_day_type(current_date: date, header: object) -> str:
     text = str(header or "").strip()
+    if not text or text.isdigit():
+        return "工作日"
+    if text in WEEKEND_HEADER_LABELS:
+        return WEEKEND_HEADER_LABELS[text]
     if is_holiday_header(header):
         return text
-    if current_date.weekday() == 5:
-        return "周六"
-    if current_date.weekday() == 6:
-        return "周日"
     return "工作日"
 
 
@@ -129,7 +171,7 @@ def parse_workbook(input_file: Path) -> ParsedWorkbook:
         current_date = report_start + timedelta(days=offset)
         header = ws.cell(row=4, column=col).value
         day_type = get_day_type(current_date, header)
-        if current_date.weekday() >= 5:
+        if day_type in WEEKEND_DAY_TYPES:
             weekend_dates.append(current_date)
         if is_holiday_header(header):
             holidays.append(ParsedHoliday(date=current_date, label=str(header).strip()))
@@ -361,9 +403,8 @@ def generate_summary(
             punches = [item[0] for item in punch_items]
             raw_parts = [item[1] for item in punch_items]
             header = date_headers.get(current_date)
-            holiday = is_holiday_header(header)
-            rest_day = current_date.weekday() >= 5 or holiday
             day_type = get_day_type(current_date, header)
+            rest_day = day_type != "工作日"
             absence = False
             overtime_hours = 0.0
             meal = False
@@ -410,7 +451,7 @@ def generate_summary(
                 summary["ot_dates"].append(f"{fmt_date(current_date)}加班{overtime_hours:g}小时")
                 if day_type == "工作日":
                     summary["workday_hours"] = float(summary["workday_hours"]) + overtime_hours
-                elif day_type in {"周六", "周日"}:
+                elif day_type in WEEKEND_DAY_TYPES:
                     summary["weekend_hours"] = float(summary["weekend_hours"]) + overtime_hours
                 else:
                     summary["holiday_hours"] = float(summary["holiday_hours"]) + overtime_hours
@@ -552,8 +593,9 @@ def write_workbook(
     rules = [
         ["项目", "口径"],
         ["统计范围", "默认忽略配置中的日期；样例默认忽略2026年6月29日"],
-        ["工作日", "按真实日期为周一至周五，且表头不是节假日文本"],
-        ["休息日/节假日", "按真实日期为周六、周日，或表头为非数字且不是“六/日”的节假日文本"],
+        ["工作日", "表头为空或为阿拉伯数字时按工作日处理，用于支持周末补班"],
+        ["周末", "表头为“六”“日”“周六”“周日”“周末”时按周末处理，不按真实星期几推断"],
+        ["节假日", "表头为非数字、且不是周末标记的文本时按节假日处理，如“xx节”“法假”"],
         ["工作日加班", "达到加班起始时间后才进入加班判断；达到2小时加班阈值算2小时；次日凌晨打卡截止前有打卡记录算4小时"],
         ["工作日餐补", "最后打卡时间达到工作日餐补阈值或更晚，或次日凌晨打卡截止前有打卡记录，享受餐补"],
         ["休息日/节假日加班", "最后打卡到12:00算3小时；17:00以后算6小时；21:00以后算8小时"],
