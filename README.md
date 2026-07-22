@@ -1,78 +1,110 @@
 # 考勤汇总工具
 
-本项目是一个本地考勤 Excel 汇总应用：先解析原始打卡表并回填可校验参数，再按规则生成加班、旷工、迟到、餐补汇总表。
+一个完全离线的桌面应用：读取原始考勤 Excel，校验日期和规则参数，并生成加班、旷工、迟到及餐补汇总表。
 
-## 后端
+桌面壳使用 Electron，界面使用 React，考勤逻辑保留在 Python sidecar 中。Electron 与 sidecar 通过标准输入/输出上的 JSON Lines 协议通信，不启动 Web 服务、不监听端口；安装后的目标电脑不需要预装 Python、Node.js 或 Docker。
 
-```bash
-uv sync
-uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8001
+## 技术分工
+
+- `electron-vite`：编译 Electron main、preload 和 React renderer，并提供开发期热更新。
+- Electron Forge：组装应用、生成 macOS/Windows 安装包，以及承接签名和发布配置。
+- PyInstaller：将 Python 核心和解释器冻结为随应用分发的 sidecar。
+
+## 工程结构
+
+```text
+src/
+  main/                 Electron 主进程
+  preload/              安全的渲染进程桥接层
+  renderer/             React 界面
+  shared/               main/preload/renderer 共用的 IPC 类型
+attendance_core/        平台无关的 Excel 解析与考勤业务核心
+attendance_sidecar/     Electron 与 Python 之间的 JSON Lines 协议入口
+packaging/pyinstaller/  Python sidecar 的打包配置
+tests/                  Python 核心与 sidecar 测试
 ```
 
-接口：
+构建目录的职责如下：
 
-- `GET /api/health`
-- `POST /api/parse`
-- `POST /api/generate`
-- `GET /api/download/{file_id}`
+- `dist/`：electron-vite 编译结果。
+- `resources/sidecar/`：PyInstaller 生成的 sidecar。
+- `.build/`：PyInstaller 临时文件。
+- `out/`：Electron Forge 生成的应用和安装包。
 
-## 前端
+## 准备开发环境
+
+工程使用 [Volta](https://volta.sh/) 固定 Node.js 24.13.1 和 npm 11.8.0。安装 Volta 后，进入工程目录会自动使用指定版本。
 
 ```bash
-cd frontend
-npm install
+volta install node@24.13.1 npm@11.8.0
+uv sync
+uv pip install --python .venv -r packaging/pyinstaller/requirements.txt
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm ci
+```
+
+工程级 `.npmrc` 已将 npm 包下载源设为 npmmirror；`ELECTRON_MIRROR` 只控制 Electron 二进制的下载地址。
+
+## 开发运行
+
+```bash
 npm run dev
 ```
 
-打开：
+该命令同时启动 electron-vite 开发服务器、Electron 主进程和 `.venv` 中的 `attendance_sidecar.main`，React 修改可热更新。
 
-```text
-http://127.0.0.1:5173
+如需用生产构建结果本地预览：
+
+```bash
+npm start
 ```
 
-## 校验
+## 检查与测试
 
 ```bash
 uv run pytest
-uv run mypy attendance_app backend
-cd frontend
+uv run mypy attendance_core attendance_sidecar
 npm run typecheck
-npm run build
+npm run build:electron
 ```
+
+## 构建桌面安装包
+
+```bash
+npm run make
+```
+
+构建依次执行 TypeScript 类型检查、electron-vite 生产编译、PyInstaller sidecar 打包和 Electron Forge 制品生成。安装包位于 `out/make/`。
+
+PyInstaller 和 Electron 原生制品不能可靠地跨系统构建，因此 Windows 包在 Windows runner 上生成，macOS 包在 macOS runner 上生成。
+
+## GitHub Actions Release
+
+`.github/workflows/release-desktop.yml` 构建以下平台：
+
+- macOS Apple Silicon（arm64）
+- macOS Intel（x64）
+- Windows x64
+
+手动运行工作流只生成 Actions artifacts；推送 `v*` 标签时还会创建 GitHub Release：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+未提供正式证书时，macOS 使用 ad-hoc 签名，Windows 不签名。正式签名使用工作流中声明的 macOS/Windows 仓库 Secrets。
 
 ## 命令行生成
 
-```bash
-python3 generate_attendance_summary.py
-```
-
-## Docker 部署
-
-复制环境变量示例并按需调整端口：
+业务核心仍可单独从命令行运行：
 
 ```bash
-cp .env.example .env
+uv run python generate_attendance_summary.py
 ```
 
-```bash
-docker compose up --build
-```
+## 使用流程
 
-容器会在 `.env` 的 `APP_PORT` 端口提供完整应用。镜像构建时会先编译前端 SPA，再由 FastAPI 同时提供 API 和静态资源：
-
-```text
-http://127.0.0.1:8001
-```
-
-部署后可以用健康检查接口确认服务状态：
-
-```bash
-curl http://127.0.0.1:8001/api/health
-```
-
-## 交互流程
-
-1. 上传 Excel 后点击“解析文件”。
-2. 系统从表头解析统计范围和所有非工作日，包括周六、周日和 `xx节` 节假日。
-3. 用户校验回填的统计日期、忽略日期、餐补和时间阈值。
-4. 点击“生成汇总表”进入下载结果步骤。
+1. 选择原始考勤 `.xlsx` 文件并解析。
+2. 校验统计日期、非工作日、忽略日期和时间阈值。
+3. 选择输出路径并生成汇总表。
+4. 在 Finder 或文件资源管理器中定位结果。

@@ -5,8 +5,8 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
-from attendance_app.config import AttendanceConfig
-from attendance_app.processor import (
+from attendance_core.config import AttendanceConfig
+from attendance_core.processor import (
     assign_punch_base_date,
     expand_cell_timeline,
     extract_times,

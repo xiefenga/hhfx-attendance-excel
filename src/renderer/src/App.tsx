@@ -18,16 +18,24 @@ import {
   Steps,
   Tag,
   TimePicker,
-  Typography,
-  Upload
+  Typography
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import type { UploadFile } from "antd";
 import dayjs, { Dayjs } from "dayjs";
 import "dayjs/locale/zh-cn";
 import { useMemo, useState } from "react";
-import { downloadUrl, generateSummary, parseWorkbook } from "./api";
-import type { AttendanceConfig, GenerateResponse, ParseResponse } from "./types";
+import {
+  generateSummary,
+  parseWorkbook,
+  revealDesktopOutput,
+  selectDesktopOutput,
+  selectDesktopWorkbook
+} from "./api";
+import type {
+  AttendanceConfig,
+  GenerateResponse,
+  ParseResponse
+} from "../../shared/ipc-contract";
 
 const { Content } = Layout;
 const { RangePicker } = DatePicker;
@@ -82,8 +90,7 @@ function buildConfig(values: FormValues): AttendanceConfig {
 
 export default function App() {
   const [form] = Form.useForm<FormValues>();
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadList, setUploadList] = useState<UploadFile[]>([]);
+  const [desktopFile, setDesktopFile] = useState<{ path: string; name: string } | null>(null);
   const [parsing, setParsing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [parseResult, setParseResult] = useState<ParseResponse | null>(null);
@@ -91,14 +98,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const currentStep = result ? 2 : parseResult ? 1 : 0;
-  const canParse = useMemo(() => uploadFile !== null && !parsing, [uploadFile, parsing]);
+  const canParse = useMemo(
+    () => desktopFile !== null && !parsing,
+    [desktopFile, parsing]
+  );
   const canGenerate = useMemo(
     () => parseResult !== null && !generating,
     [parseResult, generating]
   );
 
   async function handleParse() {
-    if (!uploadFile) {
+    if (!desktopFile) {
       setError("请先选择考勤 Excel 文件");
       return;
     }
@@ -106,7 +116,7 @@ export default function App() {
     setParsing(true);
     setResult(null);
     try {
-      const response = await parseWorkbook(uploadFile);
+      const response = await parseWorkbook(desktopFile.path);
       setParseResult(response);
       form.setFieldsValue({
         dateRange: [
@@ -124,15 +134,20 @@ export default function App() {
   }
 
   async function handleGenerate() {
-    if (!parseResult) {
+    if (!parseResult || !desktopFile) {
       setError("请先解析考勤 Excel 文件");
       return;
     }
-    setError(null);
-    setGenerating(true);
     try {
       const values = await form.validateFields();
-      const response = await generateSummary(parseResult.file_id, buildConfig(values));
+      const config = buildConfig(values);
+      const outputPath = await selectDesktopOutput(config.output_filename);
+      if (!outputPath) {
+        return;
+      }
+      setError(null);
+      setGenerating(true);
+      const response = await generateSummary(desktopFile.path, outputPath, config);
       setResult(response);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "生成失败";
@@ -140,6 +155,17 @@ export default function App() {
     } finally {
       setGenerating(false);
     }
+  }
+
+  async function handleDesktopSelect() {
+    const selected = await selectDesktopWorkbook();
+    if (!selected) {
+      return;
+    }
+    setDesktopFile(selected);
+    setParseResult(null);
+    setResult(null);
+    setError(null);
   }
 
   return (
@@ -156,9 +182,9 @@ export default function App() {
               <Steps
                 current={currentStep}
                 items={[
-                  { title: "上传解析" },
+                  { title: "选择解析" },
                   { title: "校验生成" },
-                  { title: "下载结果" }
+                  { title: "保存结果" }
                 ]}
                 className="flow-steps"
               />
@@ -168,29 +194,12 @@ export default function App() {
                   <div className="upload-step">
                     <Result
                       icon={<FileExcelOutlined className="upload-result-icon" />}
-                      title="上传原始考勤表"
+                      title="选择原始考勤表"
                       extra={
                         <Space className="upload-actions" size="middle">
-                          <Upload
-                            accept=".xlsx"
-                            maxCount={1}
-                            fileList={uploadList}
-                            beforeUpload={(file) => {
-                              setUploadFile(file);
-                              setUploadList([file]);
-                              setParseResult(null);
-                              setResult(null);
-                              return false;
-                            }}
-                            onRemove={() => {
-                              setUploadFile(null);
-                              setUploadList([]);
-                              setParseResult(null);
-                              setResult(null);
-                            }}
-                          >
-                            <Button icon={<FileExcelOutlined />}>选择 Excel</Button>
-                          </Upload>
+                          <Button icon={<FileExcelOutlined />} onClick={handleDesktopSelect}>
+                            {desktopFile?.name ?? "选择 Excel"}
+                          </Button>
                           <Button
                             type="primary"
                             icon={<SearchOutlined />}
@@ -283,9 +292,9 @@ export default function App() {
                         <Button
                           type="primary"
                           icon={<DownloadOutlined />}
-                          href={downloadUrl(result.file_id)}
+                          onClick={() => revealDesktopOutput(result.output_path)}
                         >
-                          下载结果
+                          在文件夹中显示
                         </Button>
                       ) : null
                     }

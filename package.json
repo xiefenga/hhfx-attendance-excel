@@ -1,0 +1,59 @@
+{
+  "name": "attendance-excel-desktop",
+  "productName": "考勤汇总工具",
+  "version": "0.1.0",
+  "description": "离线考勤 Excel 解析与汇总工具",
+  "author": "Attendance Excel",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "./dist/main/index.js",
+  "packageManager": "npm@11.8.0",
+  "scripts": {
+    "dev": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-vite dev --outDir=dist",
+    "start": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-vite preview --outDir=dist",
+    "build": "npm run typecheck && npm run build:electron && npm run build:sidecar",
+    "build:electron": "electron-vite build --outDir=dist",
+    "build:sidecar": "uv run --no-sync python -m PyInstaller --clean --noconfirm --distpath resources/sidecar --workpath .build/pyinstaller packaging/pyinstaller/attendance-worker.spec",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "package": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-forge package",
+    "make": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-forge make"
+  },
+  "devDependencies": {
+    "@ant-design/icons": "^5.5.2",
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^5.2.0",
+    "antd": "^5.23.4",
+    "cross-env": "7.0.3",
+    "electron": "43.1.1",
+    "electron-vite": "5.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.3.6"
+  },
+  "engines": {
+    "node": "24.x",
+    "npm": "11.x"
+  },
+  "volta": {
+    "node": "24.13.1",
+    "npm": "11.8.0"
+  },
+  "config": {
+    "forge": "./forge.config.cjs"
+  },
+  "allowScripts": {
+    "electron@43.1.1": true,
+    "electron-winstaller@5.4.4": true,
+    "fs-xattr@0.3.1": true,
+    "macos-alias@0.2.12": true
+  }
+}

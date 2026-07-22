@@ -4,11 +4,8 @@ version = "0.1.0"
 description = "Local attendance Excel parser and summary generator"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.115.6",
   "openpyxl==3.1.5",
-  "pydantic==2.12.5",
-  "python-multipart==0.0.20",
-  "uvicorn[standard]==0.34.0"
+  "pydantic==2.12.5"
 ]
 
 [build-system]
@@ -17,13 +14,12 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-  "httpx==0.28.1",
   "mypy==1.17.1",
   "pytest==7.4.0"
 ]
 
 [tool.setuptools.packages.find]
-include = ["attendance_app*", "backend*"]
+include = ["attendance_core*", "attendance_sidecar*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

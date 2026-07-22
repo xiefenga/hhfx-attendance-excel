@@ -47,13 +47,36 @@ export interface ParsedWorkbook {
 }
 
 export interface ParseResponse {
-  file_id: string;
   filename: string;
+  source_path: string;
   detected: ParsedWorkbook;
 }
 
 export interface GenerateResponse {
-  file_id: string;
   filename: string;
+  output_path: string;
   stats: SummaryStats;
+}
+
+export interface WorkerHello {
+  protocol_version: number;
+  worker_version: string;
+}
+
+export interface DesktopSelection {
+  path: string;
+  name: string;
+}
+
+export interface AttendanceDesktopApi {
+  hello(): Promise<WorkerHello>;
+  selectInput(): Promise<DesktopSelection | null>;
+  selectOutput(defaultName: string): Promise<string | null>;
+  parse(inputPath: string): Promise<ParseResponse>;
+  generate(
+    inputPath: string,
+    outputPath: string,
+    config: AttendanceConfig
+  ): Promise<GenerateResponse>;
+  reveal(outputPath: string): Promise<void>;
 }

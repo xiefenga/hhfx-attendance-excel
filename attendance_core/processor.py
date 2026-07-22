@@ -10,8 +10,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from attendance_app.config import AttendanceConfig
-from attendance_app.models import (
+from attendance_core.config import AttendanceConfig
+from attendance_core.models import (
     DetailRow,
     GenerationResult,
     ParsedHoliday,

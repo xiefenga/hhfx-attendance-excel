@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from attendance_app.config import AttendanceConfig
-from attendance_app.processor import generate_summary
+from attendance_core.config import AttendanceConfig
+from attendance_core.processor import generate_summary
 
 
 def main() -> None:
