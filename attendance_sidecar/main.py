@@ -8,8 +8,9 @@ import tempfile
 import traceback
 from dataclasses import asdict
 from datetime import date
+from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 from attendance_core.config import AttendanceConfig
 from attendance_core.processor import generate_summary, parse_workbook
@@ -157,6 +158,10 @@ def serve(input_stream: TextIO, output_stream: TextIO) -> None:
 
 
 def main() -> None:
+    # Electron uses UTF-8 JSON Lines. Redirected stdio otherwise follows the
+    # Windows ANSI code page and corrupts paths containing Chinese characters.
+    cast(TextIOWrapper, sys.stdin).reconfigure(encoding="utf-8")
+    cast(TextIOWrapper, sys.stdout).reconfigure(encoding="utf-8")
     serve(sys.stdin, sys.stdout)
 
 
