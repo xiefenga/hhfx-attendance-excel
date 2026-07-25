@@ -1,29 +1,11 @@
-import {
-  DownloadOutlined,
-  FileExcelOutlined,
-  PlayCircleOutlined,
-  SearchOutlined
-} from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  ConfigProvider,
-  DatePicker,
-  Form,
-  InputNumber,
-  Layout,
-  Result,
-  Space,
-  Steps,
-  Tag,
-  TimePicker,
-  Typography
-} from "antd";
-import zhCN from "antd/locale/zh_CN";
-import dayjs, { Dayjs } from "dayjs";
-import "dayjs/locale/zh-cn";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+
+import type {
+  AttendanceConfig,
+  DesktopSelection,
+  GenerateResponse,
+  ParseResponse
+} from "../../shared/ipc-contract";
 import {
   generateSummary,
   parseWorkbook,
@@ -31,281 +13,515 @@ import {
   selectDesktopOutput,
   selectDesktopWorkbook
 } from "./api";
-import type {
-  AttendanceConfig,
-  GenerateResponse,
-  ParseResponse
-} from "../../shared/ipc-contract";
 
-const { Content } = Layout;
-const { RangePicker } = DatePicker;
-dayjs.locale("zh-cn");
+type FileKind = "punch" | "monthly";
+type BusyState = "idle" | "parsing" | "generating";
 
-interface FormValues {
-  dateRange: [Dayjs, Dayjs];
-  ignoreDates?: Dayjs[];
-  overnight_cutoff: Dayjs;
-  work_start_time: Dayjs;
-  work_end_time: Dayjs;
-  overtime_start_time: Dayjs;
-  workday_overtime_2h_after: Dayjs;
-  workday_meal_after: Dayjs;
-  meal_allowance_amount: number;
+interface ErrorState {
+  title: string;
+  detail: string;
+  fileKind: FileKind | null;
 }
 
-const defaultValues: FormValues = {
-  dateRange: [dayjs("2026-06-01"), dayjs("2026-06-29")],
-  ignoreDates: [],
-  overnight_cutoff: dayjs("07:00", "HH:mm"),
-  work_start_time: dayjs("08:30", "HH:mm"),
-  work_end_time: dayjs("18:00", "HH:mm"),
-  overtime_start_time: dayjs("19:00", "HH:mm"),
-  workday_overtime_2h_after: dayjs("21:00", "HH:mm"),
-  workday_meal_after: dayjs("22:00", "HH:mm"),
-  meal_allowance_amount: 30
+interface ModalProps {
+  open: boolean;
+  labelledBy: string;
+  describedBy?: string;
+  className?: string;
+  onClose(): void;
+  children: ReactNode;
+}
+
+const FILE_LABELS: Record<FileKind, string> = {
+  punch: "打卡时间表",
+  monthly: "月度汇总表"
 };
 
-function toDateStrings(values?: Dayjs[]): string[] {
-  return (values ?? []).map((value) => value.format("YYYY-MM-DD"));
+function Modal({
+  open,
+  labelledBy,
+  describedBy,
+  className = "",
+  onClose,
+  children
+}: ModalProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) {
+      return;
+    }
+    if (open && !dialog.open) {
+      dialog.showModal();
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
+  }, [open]);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className={className}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClose={onClose}
+    >
+      {children}
+    </dialog>
+  );
 }
 
-function buildConfig(values: FormValues): AttendanceConfig {
-  const [start, end] = values.dateRange;
-  const allIgnoreDates = [...toDateStrings(values.ignoreDates)];
+function CheckIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="m8 12 2.5 2.5L16 9"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
+function UploadIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 16V4m0 0L8 8m4-4 4 4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M3 7h7l2 2h9v10H3V7ZM3 7V5h7l2 2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function compactDate(value: string): string {
+  return value.replace(/-/g, "");
+}
+
+function buildConfig(parsed: ParseResponse): AttendanceConfig {
+  const { detected } = parsed;
   return {
-    start_date: start.format("YYYY-MM-DD"),
-    end_date: end.format("YYYY-MM-DD"),
-    ignore_dates: allIgnoreDates,
-    overnight_cutoff: values.overnight_cutoff.format("HH:mm:ss"),
-    work_start_time: values.work_start_time.format("HH:mm:ss"),
-    work_end_time: values.work_end_time.format("HH:mm:ss"),
-    overtime_start_time: values.overtime_start_time.format("HH:mm:ss"),
-    workday_overtime_2h_after: values.workday_overtime_2h_after.format("HH:mm:ss"),
-    workday_meal_after: values.workday_meal_after.format("HH:mm:ss"),
-    meal_allowance_amount: values.meal_allowance_amount,
-    output_filename: `考勤加班汇总_${start.format("YYYYMMDD")}_${end.format("YYYYMMDD")}.xlsx`
+    start_date: detected.suggested_start_date,
+    end_date: detected.suggested_end_date,
+    ignore_dates: detected.suggested_ignore_dates,
+    overnight_cutoff: "07:00:00",
+    work_start_time: "08:30:00",
+    work_end_time: "18:00:00",
+    overtime_start_time: "19:00:00",
+    workday_overtime_2h_after: "21:00:00",
+    workday_meal_after: "22:00:00",
+    meal_allowance_amount: 30,
+    output_filename: `考勤汇总_${compactDate(detected.suggested_start_date)}_${compactDate(
+      detected.suggested_end_date
+    )}.xlsx`
   };
 }
 
+function classifyError(caught: unknown): ErrorState {
+  const detail = caught instanceof Error ? caught.message : "处理失败，请更换文件后重试。";
+  let fileKind: FileKind | null = null;
+  if (detail.includes("打卡时间表")) {
+    fileKind = "punch";
+  } else if (detail.includes("月度汇总表")) {
+    fileKind = "monthly";
+  }
+  return {
+    title: fileKind ? `无法读取${FILE_LABELS[fileKind]}` : "无法生成考勤汇总表",
+    detail,
+    fileKind
+  };
+}
+
+function FileCard({
+  kind,
+  file,
+  parseResult,
+  disabled,
+  isError,
+  onSelect
+}: {
+  kind: FileKind;
+  file: DesktopSelection | null;
+  parseResult: ParseResponse | null;
+  disabled: boolean;
+  isError: boolean;
+  onSelect(): void;
+}) {
+  const label = FILE_LABELS[kind];
+  const employeeCount = parseResult
+    ? kind === "punch"
+      ? parseResult.detected.employee_count
+      : parseResult.detected.monthly_employee_count
+    : null;
+
+  return (
+    <article
+      className={`file-card${file ? " is-ready" : ""}${isError ? " is-error" : ""}`}
+      aria-label={label}
+    >
+      <div className="file-card-head">
+        <h2>{label}</h2>
+        <p>
+          {kind === "punch"
+            ? "读取每日上下班打卡时间"
+            : "核对人员与月度考勤状态"}
+        </p>
+      </div>
+
+      <div className="file-state" aria-live="polite">
+        {file ? (
+          <div className="selected-file">
+            <CheckIcon className="selected-check" />
+            <div className="selected-file-copy">
+              <span className="file-name" title={file.name}>
+                {file.name}
+              </span>
+              <span className="file-meta">
+                {employeeCount === null
+                  ? `${formatFileSize(file.size)} · 等待校验`
+                  : `已校验 · ${employeeCount} 人`}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <span className="empty-state">尚未选择 · 支持钉钉导出的 .xlsx 文件</span>
+        )}
+      </div>
+
+      <button className="choose-button" type="button" disabled={disabled} onClick={onSelect}>
+        <UploadIcon />
+        <span>{file ? "更换文件" : `选择${label}`}</span>
+      </button>
+    </article>
+  );
+}
+
 export default function App() {
-  const [form] = Form.useForm<FormValues>();
-  const [desktopFile, setDesktopFile] = useState<{ path: string; name: string } | null>(null);
-  const [parsing, setParsing] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [punchFile, setPunchFile] = useState<DesktopSelection | null>(null);
+  const [monthlyFile, setMonthlyFile] = useState<DesktopSelection | null>(null);
+  const [busy, setBusy] = useState<BusyState>("idle");
   const [parseResult, setParseResult] = useState<ParseResponse | null>(null);
   const [result, setResult] = useState<GenerateResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ErrorState | null>(null);
+  const [differenceOpen, setDifferenceOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const [revealed, setRevealed] = useState(false);
 
-  const currentStep = result ? 2 : parseResult ? 1 : 0;
-  const canParse = useMemo(
-    () => desktopFile !== null && !parsing,
-    [desktopFile, parsing]
-  );
-  const canGenerate = useMemo(
-    () => parseResult !== null && !generating,
-    [parseResult, generating]
-  );
+  const ready = punchFile !== null && monthlyFile !== null;
+  const isBusy = busy !== "idle";
+  const differences = useMemo(() => {
+    if (!parseResult) {
+      return [];
+    }
+    return [
+      ...parseResult.detected.punch_only_employees.map((name) => ({
+        name,
+        location: "仅在打卡时间表"
+      })),
+      ...parseResult.detected.monthly_only_employees.map((name) => ({
+        name,
+        location: "仅在月度汇总表"
+      }))
+    ];
+  }, [parseResult]);
 
-  async function handleParse() {
-    if (!desktopFile) {
-      setError("请先选择考勤 Excel 文件");
+  async function handleDesktopSelect(kind: FileKind) {
+    try {
+      const selected = await selectDesktopWorkbook(kind);
+      if (!selected) {
+        return;
+      }
+      if (kind === "punch") {
+        setPunchFile(selected);
+      } else {
+        setMonthlyFile(selected);
+      }
+      setParseResult(null);
+      setResult(null);
+      setError(null);
+      setRevealed(false);
+    } catch (caught) {
+      setError(classifyError(caught));
+    }
+  }
+
+  async function generateFromParsed(parsed: ParseResponse) {
+    if (!punchFile || !monthlyFile) {
       return;
     }
-    setError(null);
-    setParsing(true);
-    setResult(null);
-    try {
-      const response = await parseWorkbook(desktopFile.path);
-      setParseResult(response);
-      form.setFieldsValue({
-        dateRange: [
-          dayjs(response.detected.suggested_start_date),
-          dayjs(response.detected.suggested_end_date)
-        ],
-        ignoreDates: response.detected.suggested_ignore_dates.map((value) => dayjs(value))
-      });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "解析失败";
-      setError(message);
-    } finally {
-      setParsing(false);
+    const config = buildConfig(parsed);
+    const outputPath = await selectDesktopOutput(config.output_filename);
+    if (!outputPath) {
+      return;
     }
+    setBusy("generating");
+    const generated = await generateSummary(
+      punchFile.path,
+      monthlyFile.path,
+      outputPath,
+      config
+    );
+    setResult(generated);
+    setResultOpen(true);
+    setRevealed(false);
   }
 
   async function handleGenerate() {
-    if (!parseResult || !desktopFile) {
-      setError("请先解析考勤 Excel 文件");
+    if (!punchFile || !monthlyFile || isBusy) {
+      return;
+    }
+    setError(null);
+    try {
+      let parsed = parseResult;
+      if (!parsed) {
+        setBusy("parsing");
+        parsed = await parseWorkbook(punchFile.path, monthlyFile.path);
+        setParseResult(parsed);
+      }
+      const hasDifferences =
+        parsed.detected.punch_only_employees.length > 0 ||
+        parsed.detected.monthly_only_employees.length > 0 ||
+        parsed.detected.source_warnings.length > 0;
+      if (hasDifferences) {
+        setDifferenceOpen(true);
+        return;
+      }
+      await generateFromParsed(parsed);
+    } catch (caught) {
+      setError(classifyError(caught));
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  async function handleContinueWithDifferences() {
+    if (!parseResult || isBusy) {
+      return;
+    }
+    setDifferenceOpen(false);
+    setError(null);
+    try {
+      await generateFromParsed(parseResult);
+    } catch (caught) {
+      setError(classifyError(caught));
+    } finally {
+      setBusy("idle");
+    }
+  }
+
+  async function handleReveal() {
+    if (!result) {
       return;
     }
     try {
-      const values = await form.validateFields();
-      const config = buildConfig(values);
-      const outputPath = await selectDesktopOutput(config.output_filename);
-      if (!outputPath) {
-        return;
-      }
-      setError(null);
-      setGenerating(true);
-      const response = await generateSummary(desktopFile.path, outputPath, config);
-      setResult(response);
+      await revealDesktopOutput(result.output_path);
+      setRevealed(true);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "生成失败";
-      setError(message);
-    } finally {
-      setGenerating(false);
+      setResultOpen(false);
+      setError(classifyError(caught));
     }
   }
 
-  async function handleDesktopSelect() {
-    const selected = await selectDesktopWorkbook();
-    if (!selected) {
-      return;
-    }
-    setDesktopFile(selected);
-    setParseResult(null);
-    setResult(null);
-    setError(null);
-  }
+  const buttonLabel =
+    busy === "parsing"
+      ? "正在校验两张表…"
+      : busy === "generating"
+        ? "正在计算并生成…"
+        : parseResult
+          ? "生成考勤汇总表"
+          : "校验并生成汇总表";
 
   return (
-    <ConfigProvider locale={zhCN}>
-      <Layout className="app-shell">
-        <Content className="app-content">
-          <div className="page-title">
-            <Typography.Title level={2}>考勤汇总工具</Typography.Title>
+    <div className="application-window">
+      <header className="titlebar" aria-label="窗口标题栏" />
+
+      <main>
+        <section className="setup-view" aria-busy={isBusy}>
+          <div className="intro">
+            <h1>生成考勤汇总表</h1>
           </div>
 
-          <div className="workspace">
-            <section className="main-panel">
-              <Card size="small">
-              <Steps
-                current={currentStep}
-                items={[
-                  { title: "选择解析" },
-                  { title: "校验生成" },
-                  { title: "保存结果" }
-                ]}
-                className="flow-steps"
-              />
-              {error ? <Alert className="form-alert" type="error" showIcon message={error} /> : null}
-              <Form form={form} layout="vertical" initialValues={defaultValues}>
-                {currentStep === 0 ? (
-                  <div className="upload-step">
-                    <Result
-                      icon={<FileExcelOutlined className="upload-result-icon" />}
-                      title="选择原始考勤表"
-                      extra={
-                        <Space className="upload-actions" size="middle">
-                          <Button icon={<FileExcelOutlined />} onClick={handleDesktopSelect}>
-                            {desktopFile?.name ?? "选择 Excel"}
-                          </Button>
-                          <Button
-                            type="primary"
-                            icon={<SearchOutlined />}
-                            loading={parsing}
-                            disabled={!canParse}
-                            onClick={handleParse}
-                          >
-                            解析文件
-                          </Button>
-                        </Space>
-                      }
-                    />
-                  </div>
-                ) : currentStep === 1 ? (
-                  <>
-                    <Typography.Paragraph type="secondary">
-                      已解析：{parseResult?.filename}
-                    </Typography.Paragraph>
-                    <div className="non-workday-row">
-                      <Typography.Text type="secondary">自动识别非工作日</Typography.Text>
-                      <div className="tag-list">
-                        {parseResult?.detected.non_workdays.length ? (
-                          parseResult.detected.non_workdays.map((day) => (
-                            <Tag color="blue" key={`${day.date}-${day.label}`}>
-                              {day.date} {day.label}
-                            </Tag>
-                          ))
-                        ) : (
-                          <Typography.Text>无</Typography.Text>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="form-grid">
-                      <Form.Item
-                        name="dateRange"
-                        label="统计日期"
-                        rules={[{ required: true, message: "请选择统计日期" }]}
-                      >
-                        <RangePicker />
-                      </Form.Item>
-                      <Form.Item name="ignoreDates" label="忽略日期">
-                        <DatePicker multiple />
-                      </Form.Item>
-                      <Form.Item name="overnight_cutoff" label="凌晨打卡截止">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item name="work_start_time" label="上班时间">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item name="work_end_time" label="下班时间">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item name="overtime_start_time" label="加班起始时间">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item name="workday_meal_after" label="工作日餐补阈值">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item name="workday_overtime_2h_after" label="2小时加班阈值">
-                        <TimePicker format="HH:mm" />
-                      </Form.Item>
-                      <Form.Item
-                        name="meal_allowance_amount"
-                        label="餐补金额"
-                        rules={[{ required: true, message: "请输入餐补金额" }]}
-                      >
-                        <InputNumber min={0} precision={0} addonAfter="元" />
-                      </Form.Item>
-                    </div>
-
-                    <Space className="generate-actions">
-                      <Button
-                        type="primary"
-                        icon={<PlayCircleOutlined />}
-                        loading={generating}
-                        disabled={!canGenerate}
-                        onClick={handleGenerate}
-                      >
-                        生成汇总表
-                      </Button>
-                    </Space>
-                  </>
-                ) : (
-                  <Result
-                    status="success"
-                    title="汇总表已生成"
-                    extra={
-                      result ? (
-                        <Button
-                          type="primary"
-                          icon={<DownloadOutlined />}
-                          onClick={() => revealDesktopOutput(result.output_path)}
-                        >
-                          在文件夹中显示
-                        </Button>
-                      ) : null
-                    }
-                  />
-                )}
-              </Form>
-              </Card>
-            </section>
+          <div className="file-grid">
+            <FileCard
+              kind="punch"
+              file={punchFile}
+              parseResult={parseResult}
+              disabled={isBusy}
+              isError={error?.fileKind === "punch"}
+              onSelect={() => void handleDesktopSelect("punch")}
+            />
+            <FileCard
+              kind="monthly"
+              file={monthlyFile}
+              parseResult={parseResult}
+              disabled={isBusy}
+              isError={error?.fileKind === "monthly"}
+              onSelect={() => void handleDesktopSelect("monthly")}
+            />
           </div>
-        </Content>
-      </Layout>
-    </ConfigProvider>
+
+          <div className="message-slot" aria-live="assertive" aria-atomic="true">
+            {error ? (
+              <div className="message error-message" role="alert">
+                <span className="error-symbol" aria-hidden="true">
+                  !
+                </span>
+                <div className="message-body">
+                  <strong>{error.title}</strong>
+                  <p>{error.detail}</p>
+                </div>
+              </div>
+            ) : parseResult ? (
+              <div className="validation-summary">
+                <CheckIcon />
+                <span>
+                  已校验，{parseResult.detected.matched_employee_count} 名员工可参与汇总
+                </span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="action-zone">
+            <button
+              className="primary-button generate-button"
+              type="button"
+              disabled={!ready || isBusy}
+              onClick={() => void handleGenerate()}
+            >
+              {isBusy ? <span className="spinner" aria-hidden="true" /> : null}
+              <span>{buttonLabel}</span>
+            </button>
+          </div>
+        </section>
+      </main>
+
+      <Modal
+        open={differenceOpen}
+        labelledBy="difference-title"
+        describedBy="difference-description"
+        onClose={() => setDifferenceOpen(false)}
+      >
+        <div className="dialog-body">
+          <div className="dialog-title">
+            <span className="warning-icon" aria-hidden="true">
+              !
+            </span>
+            <h2 id="difference-title">两张表的人员名单不一致</h2>
+          </div>
+          <p id="difference-description">
+            发现 {differences.length || parseResult?.detected.source_warnings.length || 0}{" "}
+            项人员差异。继续生成时，仅汇总两张表中均存在的人员。
+          </p>
+          <ul className="difference-list">
+            {differences.length > 0
+              ? differences.map((item) => (
+                  <li key={`${item.location}-${item.name}`}>
+                    <span>{item.name}</span>
+                    <span>{item.location}</span>
+                  </li>
+                ))
+              : parseResult?.detected.source_warnings.map((warning) => (
+                  <li key={warning}>
+                    <span>{warning}</span>
+                  </li>
+                ))}
+          </ul>
+        </div>
+        <div className="dialog-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setDifferenceOpen(false)}
+          >
+            返回更换文件
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void handleContinueWithDifferences()}
+          >
+            仍然生成
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={resultOpen}
+        labelledBy="result-title"
+        className="result-dialog"
+        onClose={() => setResultOpen(false)}
+      >
+        <button
+          className="result-dialog-close"
+          type="button"
+          aria-label="关闭生成结果"
+          title="关闭"
+          onClick={() => setResultOpen(false)}
+        />
+        <div className="result-panel">
+          <span className="success-icon" aria-hidden="true">
+            ✓
+          </span>
+          <div>
+            <h2 id="result-title">考勤汇总表已生成</h2>
+            <p className="result-description">
+              {result
+                ? `已汇总 ${result.stats.people} 人、${result.stats.overtime_records} 条加班记录与 ${result.stats.meal_records} 次餐补。`
+                : ""}
+            </p>
+          </div>
+          {result ? (
+            <div className="output-file" title={result.output_path}>
+              <span>输出文件</span>
+              <strong>{result.filename}</strong>
+            </div>
+          ) : null}
+          <div className="result-actions">
+            <button className="primary-button" type="button" onClick={() => void handleReveal()}>
+              {revealed ? <CheckIcon /> : <FolderIcon />}
+              <span>{revealed ? "已在文件夹中定位" : "在文件夹中显示"}</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 }

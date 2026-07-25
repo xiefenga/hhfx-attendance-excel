@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, TextIO, cast
 
 from attendance_core.config import AttendanceConfig
-from attendance_core.processor import generate_summary, parse_workbook
+from attendance_core.processor import generate_summary, parse_sources
 
 
 PROTOCOL_VERSION = 1
@@ -55,24 +55,33 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
 
     if method == "parse":
         input_path = require_xlsx(payload.get("input_path"), "input_path")
+        monthly_path = require_xlsx(payload.get("monthly_path"), "monthly_path")
         if not input_path.is_file():
-            raise WorkerRequestError("file_not_found", "源文件不存在")
+            raise WorkerRequestError("file_not_found", "打卡时间表不存在")
+        if not monthly_path.is_file():
+            raise WorkerRequestError("file_not_found", "月度汇总表不存在")
         return {
             "source_path": str(input_path),
             "filename": input_path.name,
-            "detected": asdict(parse_workbook(input_path)),
+            "monthly_source_path": str(monthly_path),
+            "monthly_filename": monthly_path.name,
+            "detected": asdict(parse_sources(input_path, monthly_path)),
         }
 
     if method == "generate":
         input_path = require_xlsx(payload.get("input_path"), "input_path")
+        monthly_path = require_xlsx(payload.get("monthly_path"), "monthly_path")
         output_path = require_xlsx(payload.get("output_path"), "output_path")
         if not input_path.is_file():
-            raise WorkerRequestError("file_not_found", "源文件不存在")
-        same_file = input_path == output_path or (
-            output_path.exists() and input_path.samefile(output_path)
-        )
-        if same_file:
-            raise WorkerRequestError("invalid_output", "输出文件不能覆盖原始考勤文件")
+            raise WorkerRequestError("file_not_found", "打卡时间表不存在")
+        if not monthly_path.is_file():
+            raise WorkerRequestError("file_not_found", "月度汇总表不存在")
+        for source_path in (input_path, monthly_path):
+            same_file = source_path == output_path or (
+                output_path.exists() and source_path.samefile(output_path)
+            )
+            if same_file:
+                raise WorkerRequestError("invalid_output", "输出文件不能覆盖任一原始考勤文件")
 
         raw_config = payload.get("config")
         if not isinstance(raw_config, dict):
@@ -86,7 +95,12 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             tempfile.mkdtemp(prefix=".attendance-", dir=str(output_path.parent))
         )
         try:
-            result = generate_summary(input_path, temp_dir, config)
+            result = generate_summary(
+                input_path,
+                temp_dir,
+                config,
+                monthly_file=monthly_path,
+            )
             os.replace(result.output_path, output_path)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)

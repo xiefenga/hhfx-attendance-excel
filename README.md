@@ -1,6 +1,6 @@
 # 考勤汇总工具
 
-一个完全离线的桌面应用：读取原始考勤 Excel，校验日期和规则参数，并生成加班、旷工、迟到及餐补汇总表。
+一个完全离线的桌面应用：读取钉钉导出的“打卡时间”和“月度汇总”两张 Excel，校验人员、日期和规则参数，并生成包含每日上下午状态、加班、旷工、迟到及餐补的汇总表。
 
 桌面壳使用 Electron，界面使用 React，考勤逻辑保留在 Python sidecar 中。Electron 与 sidecar 通过标准输入/输出上的 JSON Lines 协议通信，不启动 Web 服务、不监听端口；安装后的目标电脑不需要预装 Python、Node.js 或 Docker。
 
@@ -99,12 +99,15 @@ git push origin v0.1.0
 业务核心仍可单独从命令行运行：
 
 ```bash
-uv run python generate_attendance_summary.py
+uv run python generate_attendance_summary.py 打卡时间.xlsx 月度汇总.xlsx
 ```
 
 ## 使用流程
 
-1. 选择原始考勤 `.xlsx` 文件并解析。
+1. 分别选择钉钉导出的“打卡时间”和“月度汇总” `.xlsx` 文件并解析。
 2. 校验统计日期、非工作日、忽略日期和时间阈值。
-3. 选择输出路径并生成汇总表。
+3. 选择输出路径，生成“汇总表、加班明细、人员汇总、统计口径”四张 Sheet。
 4. 在 Finder 或文件资源管理器中定位结果。
+
+当前程序实际执行的输入格式、日期类型、跨天打卡、迟到、旷工、加班和餐补口径见
+[考勤统计规则](docs/attendance-rules.md)。

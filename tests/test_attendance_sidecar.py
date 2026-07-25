@@ -4,11 +4,32 @@ import io
 import json
 from pathlib import Path
 
+from openpyxl import Workbook, load_workbook
+
 from attendance_sidecar.main import response_for, serve
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "打卡时间.xlsx"
+
+
+def create_monthly_workbook(path: Path) -> Path:
+    punch = load_workbook(SOURCE, data_only=True, read_only=True).active
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "月度汇总"
+    ws["A1"] = "月度汇总 2026-06-01 至 2026-06-29"
+    ws.cell(row=3, column=37, value="考勤结果")
+    for day in range(1, 30):
+        ws.cell(row=4, column=36 + day, value=day)
+    for target_row, source_row in enumerate(range(5, punch.max_row + 1), start=5):
+        if not punch.cell(row=source_row, column=1).value:
+            continue
+        for col in (1, 3, 4, 6):
+            ws.cell(row=target_row, column=col, value=punch.cell(row=source_row, column=col).value)
+    wb.save(path)
+    wb.close()
+    return path
 
 
 def test_worker_hello() -> None:
@@ -24,11 +45,15 @@ def test_worker_hello() -> None:
 
 
 def test_worker_parse_and_generate(tmp_path: Path) -> None:
+    monthly_path = create_monthly_workbook(tmp_path / "月度汇总.xlsx")
     parsed = response_for(
         {
             "request_id": "parse-1",
             "method": "parse",
-            "payload": {"input_path": str(SOURCE)},
+            "payload": {
+                "input_path": str(SOURCE),
+                "monthly_path": str(monthly_path),
+            },
         }
     )
     output_path = tmp_path / "桌面端汇总.xlsx"
@@ -38,6 +63,7 @@ def test_worker_parse_and_generate(tmp_path: Path) -> None:
             "method": "generate",
             "payload": {
                 "input_path": str(SOURCE),
+                "monthly_path": str(monthly_path),
                 "output_path": str(output_path),
                 "config": {
                     "start_date": "2026-06-01",
@@ -58,7 +84,9 @@ def test_worker_parse_and_generate(tmp_path: Path) -> None:
 
     assert parsed["ok"] is True
     assert parsed["result"]["filename"] == SOURCE.name
+    assert parsed["result"]["monthly_filename"] == monthly_path.name
     assert parsed["result"]["detected"]["employee_count"] == 75
+    assert parsed["result"]["detected"]["matched_employee_count"] == 75
     assert generated["ok"] is True
     assert generated["result"]["output_path"] == str(output_path)
     assert generated["result"]["stats"]["late_records"] == 197
@@ -72,6 +100,7 @@ def test_worker_rejects_overwriting_source() -> None:
             "method": "generate",
             "payload": {
                 "input_path": str(SOURCE),
+                "monthly_path": str(SOURCE),
                 "output_path": str(SOURCE),
                 "config": {},
             },

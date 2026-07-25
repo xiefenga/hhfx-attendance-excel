@@ -1,25 +1,108 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
 from attendance_core.config import AttendanceConfig
+from attendance_core.monthly import derive_half_day_statuses
 from attendance_core.processor import (
     assign_punch_base_date,
     expand_cell_timeline,
     extract_times,
     generate_summary,
     get_day_type,
+    holiday_overtime,
     is_holiday_header,
     parse_workbook,
+    parse_sources,
     previous_day_is_incomplete,
+    weekend_overtime,
+    workday_overtime,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "打卡时间.xlsx"
+
+
+def create_dual_source_workbooks(directory: Path) -> tuple[Path, Path]:
+    punch_path = directory / "公司_打卡时间_20260601-20260603.xlsx"
+    monthly_path = directory / "公司_月度汇总_20260601-20260603.xlsx"
+
+    punch = Workbook()
+    punch_ws = punch.active
+    punch_ws["A1"] = "打卡时间 2026-06-01 至 2026-06-03"
+    for col, value in enumerate(("1", "六", "端午节"), start=7):
+        punch_ws.cell(row=4, column=col, value=value)
+    for col, value in {1: "测试员工", 3: "测试部门", 4: "001", 6: "U001"}.items():
+        punch_ws.cell(row=5, column=col, value=value)
+    punch_ws.cell(row=5, column=7, value="08:20 22:00")
+    punch_ws.cell(row=5, column=8, value="09:00 21:00")
+    punch_ws.cell(row=5, column=9, value="09:00 17:00")
+    punch.save(punch_path)
+    punch.close()
+
+    monthly = Workbook()
+    monthly_ws = monthly.active
+    monthly_ws.title = "月度汇总"
+    monthly_ws["A1"] = "月度汇总 2026-06-01 至 2026-06-03"
+    monthly_ws.cell(row=3, column=34, value="旷工天数")
+    monthly_ws.cell(row=4, column=22, value="事假(小时)")
+    monthly_ws.cell(row=4, column=25, value="年假(天)")
+    monthly_ws.cell(row=3, column=37, value="考勤结果")
+    for col, value in enumerate(("1", "2", "3"), start=37):
+        monthly_ws.cell(row=4, column=col, value=value)
+    for col, value in {1: "测试员工", 3: "测试部门", 4: "001", 6: "U001"}.items():
+        monthly_ws.cell(row=5, column=col, value=value)
+    monthly_ws.cell(row=5, column=37, value="正常\n(08:20,22:00)")
+    monthly_ws.cell(row=5, column=38, value="休息\n(09:00,21:00)")
+    monthly_ws.cell(row=5, column=39, value="休息\n(09:00,17:00)")
+    monthly.save(monthly_path)
+    monthly.close()
+    return punch_path, monthly_path
+
+
+def test_monthly_half_day_status_uses_official_period_overlap() -> None:
+    current = date(2026, 6, 15)
+    assert derive_half_day_statuses(
+        "年假06-15 08:30到06-15 13:15 0.5天\n(-,18:32)", current, "工作日"
+    ) == ("年假", "√")
+    assert derive_half_day_statuses(
+        "事假06-15 13:15到06-15 18:00 0.5天\n(08:23,12:01)", current, "工作日"
+    ) == ("√", "事假")
+
+
+def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
+
+    parsed = parse_sources(punch_path, monthly_path)
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        AttendanceConfig(
+            start_date=date(2026, 6, 1),
+            end_date=date(2026, 6, 3),
+            ignore_dates=[],
+            output_filename="考勤汇总.xlsx",
+        ),
+        monthly_file=monthly_path,
+    )
+
+    assert parsed.matched_employee_count == 1
+    assert not parsed.source_warnings
+    workbook = load_workbook(result.output_path, data_only=True)
+    assert workbook.sheetnames == ["汇总表", "加班明细", "人员汇总", "统计口径"]
+    summary = workbook["汇总表"]
+    assert summary["C5"].value == "测试员工"
+    assert summary["D5"].value == 1
+    assert summary["E5"].value == 2
+    assert summary["F5"].value == 8
+    assert summary["O5"].value == "√"
+    assert summary["O6"].value == "√"
+    assert summary["P5"].value is None
+    workbook.close()
 
 
 def test_sample_workbook_ignores_june_29() -> None:
@@ -51,6 +134,52 @@ def test_workday_overtime_values_are_only_two_or_four() -> None:
     }
 
     assert workday_hours == {2.0, 4.0}
+
+
+def test_workday_overtime_and_meal_boundaries() -> None:
+    base_date = date(2026, 6, 10)
+    config = AttendanceConfig()
+
+    def calculate(last_dt: datetime) -> tuple[float, bool]:
+        hours, meal, _note = workday_overtime(
+            [datetime.combine(base_date, time(8, 20)), last_dt],
+            base_date,
+            config,
+        )
+        return hours, meal
+
+    assert calculate(datetime.combine(base_date, time(20, 59))) == (0.0, False)
+    assert calculate(datetime.combine(base_date, time(21, 0))) == (2.0, False)
+    assert calculate(datetime.combine(base_date, time(21, 59))) == (2.0, False)
+    assert calculate(datetime.combine(base_date, time(22, 0))) == (2.0, True)
+    assert calculate(datetime.combine(base_date, time(23, 59))) == (2.0, True)
+    assert calculate(datetime.combine(base_date + timedelta(days=1), time(0, 0))) == (4.0, True)
+
+
+def test_weekend_overtime_requires_full_period_coverage() -> None:
+    base_date = date(2026, 6, 13)
+
+    def punches(start: time, end: time) -> list[datetime]:
+        return [datetime.combine(base_date, start), datetime.combine(base_date, end)]
+
+    assert weekend_overtime(punches(time(10, 0), time(13, 0)), base_date) == (0.0, False)
+    assert weekend_overtime(punches(time(10, 0), time(17, 0)), base_date) == (3.0, False)
+    assert weekend_overtime(punches(time(8, 30), time(18, 0)), base_date) == (6.0, False)
+    assert weekend_overtime(punches(time(9, 0), time(21, 0)), base_date) == (8.0, True)
+    assert weekend_overtime(punches(time(8, 0), time(22, 0)), base_date) == (8.0, True)
+
+
+def test_holiday_overtime_requires_full_period_coverage() -> None:
+    base_date = date(2026, 6, 19)
+
+    def punches(start: time, end: time) -> list[datetime]:
+        return [datetime.combine(base_date, start), datetime.combine(base_date, end)]
+
+    assert holiday_overtime(punches(time(10, 0), time(13, 0)), base_date) == (0.0, False)
+    assert holiday_overtime(punches(time(10, 0), time(17, 0)), base_date) == (0.5, False)
+    assert holiday_overtime(punches(time(9, 0), time(13, 0)), base_date) == (0.5, False)
+    assert holiday_overtime(punches(time(9, 0), time(17, 0)), base_date) == (1.0, True)
+    assert holiday_overtime(punches(time(8, 0), time(22, 0)), base_date) == (1.0, True)
 
 
 def test_early_morning_punch_stays_today_when_today_has_no_normal_start_punch() -> None:
@@ -193,8 +322,8 @@ def test_summary_uses_header_not_weekday_for_makeup_workdays_and_rest_days() -> 
     ws.cell(row=5, column=3, value="测试部门")
     ws.cell(row=5, column=4, value="001")
     ws.cell(row=5, column=7, value="08:20")
-    ws.cell(row=5, column=8, value="18:00")
-    ws.cell(row=5, column=9, value="21:30")
+    ws.cell(row=5, column=8, value="08:30 17:00")
+    ws.cell(row=5, column=9, value="08:30 21:30")
     wb.save(source)
     wb.close()
 
@@ -207,7 +336,7 @@ def test_summary_uses_header_not_weekday_for_makeup_workdays_and_rest_days() -> 
     assert not rows[date(2026, 6, 14)].absent
     assert rows[date(2026, 6, 14)].overtime_hours == 6.0
     assert rows[date(2026, 6, 15)].day_type == "法假"
-    assert rows[date(2026, 6, 15)].overtime_hours == 8.0
+    assert rows[date(2026, 6, 15)].holiday_overtime_days == 1.0
 
 
 def test_person_summary_splits_overtime_hours_by_day_type() -> None:
@@ -219,8 +348,8 @@ def test_person_summary_splits_overtime_hours_by_day_type() -> None:
     assert headers[7:11] == [
         "工作日加班时长",
         "周末加班时长",
-        "节假日加班时长",
-        "本月加班时长合计",
+        "节假日加班天数",
+        "工作日及周末加班时长合计",
     ]
 
     expected: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -230,15 +359,14 @@ def test_person_summary_splits_overtime_hours_by_day_type() -> None:
             key,
             {"workday": 0.0, "weekend": 0.0, "holiday": 0.0, "total": 0.0},
         )
-        if row.overtime_hours <= 0:
-            continue
-        if row.day_type == "工作日":
+        if row.day_type == "工作日" and row.overtime_hours > 0:
             person["workday"] += row.overtime_hours
-        elif row.day_type in {"周六", "周日"}:
+            person["total"] += row.overtime_hours
+        elif row.day_type in {"周六", "周日"} and row.overtime_hours > 0:
             person["weekend"] += row.overtime_hours
-        else:
-            person["holiday"] += row.overtime_hours
-        person["total"] += row.overtime_hours
+            person["total"] += row.overtime_hours
+        elif row.holiday_overtime_days > 0:
+            person["holiday"] += row.holiday_overtime_days
 
     actual_rows = {
         (
@@ -249,7 +377,7 @@ def test_person_summary_splits_overtime_hours_by_day_type() -> None:
         for row in ws.iter_rows(min_row=2)
     }
     for key, values in expected.items():
-        if values["total"] == 0:
+        if values["total"] == 0 and values["holiday"] == 0:
             continue
         row = actual_rows[key]
         assert float(row[7].value or 0) == round(values["workday"], 2)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,11 @@ from attendance_core.models import (
     ParsedNonWorkday,
     ParsedWorkbook,
     SummaryStats,
+)
+from attendance_core.monthly import (
+    MonthlyWorkbook,
+    parse_monthly_workbook,
+    write_attendance_summary_sheet,
 )
 
 
@@ -159,15 +165,19 @@ def get_day_type(current_date: date, header: object) -> str:
 
 
 def parse_workbook(input_file: Path) -> ParsedWorkbook:
-    source = load_workbook(input_file, data_only=True, read_only=True)
+    source = load_workbook(input_file, data_only=True)
     ws = source.active
     report_start, report_end = parse_report_range(ws)
+    expected_date_count = (report_end - report_start).days + 1
+    if ws.max_column - 6 < expected_date_count:
+        source.close()
+        raise ValueError("打卡时间表的每日打卡列少于统计日期天数")
 
     holidays: list[ParsedHoliday] = []
     weekend_dates: list[date] = []
     non_workdays: list[ParsedNonWorkday] = []
-    date_count = max(0, ws.max_column - 6)
-    for offset, col in enumerate(range(7, ws.max_column + 1)):
+    date_count = expected_date_count
+    for offset, col in enumerate(range(7, 7 + expected_date_count)):
         current_date = report_start + timedelta(days=offset)
         header = ws.cell(row=4, column=col).value
         day_type = get_day_type(current_date, header)
@@ -195,6 +205,64 @@ def parse_workbook(input_file: Path) -> ParsedWorkbook:
         non_workdays=non_workdays,
         employee_count=employee_count,
         date_count=date_count,
+    )
+
+
+def workbook_employees(input_file: Path) -> dict[str, str]:
+    source = load_workbook(input_file, data_only=True)
+    ws = source.active
+    employees: dict[str, str] = {}
+    for row in range(5, ws.max_row + 1):
+        name = str(ws.cell(row=row, column=1).value or "").strip()
+        user_id = str(ws.cell(row=row, column=6).value or "").strip()
+        if not name:
+            continue
+        if not user_id:
+            source.close()
+            raise ValueError(f"打卡时间表中员工“{name}”缺少钉钉 UserId")
+        if user_id in employees:
+            source.close()
+            raise ValueError(f"打卡时间表中存在重复钉钉 UserId：{user_id}")
+        employees[user_id] = name
+    source.close()
+    return employees
+
+
+def parse_sources(input_file: Path, monthly_file: Path) -> ParsedWorkbook:
+    parsed = parse_workbook(input_file)
+    monthly = parse_monthly_workbook(monthly_file)
+    if (parsed.report_start, parsed.report_end) != (
+        monthly.report_start,
+        monthly.report_end,
+    ):
+        raise ValueError("两张钉钉导出表的统计日期范围不一致")
+
+    punch_employees = workbook_employees(input_file)
+    monthly_employees: dict[str, str] = {}
+    for employee in monthly.employees:
+        if not employee.user_id:
+            raise ValueError(f"月度汇总表中员工“{employee.name}”缺少钉钉 UserId")
+        if employee.user_id in monthly_employees:
+            raise ValueError(f"月度汇总表中存在重复钉钉 UserId：{employee.user_id}")
+        monthly_employees[employee.user_id] = employee.name
+
+    punch_ids = set(punch_employees)
+    monthly_ids = set(monthly_employees)
+    punch_only = sorted(punch_employees[user_id] for user_id in punch_ids - monthly_ids)
+    monthly_only = sorted(monthly_employees[user_id] for user_id in monthly_ids - punch_ids)
+    warnings: list[str] = []
+    if punch_only:
+        warnings.append(f"仅打卡时间表存在：{'、'.join(punch_only)}")
+    if monthly_only:
+        warnings.append(f"仅月度汇总表存在：{'、'.join(monthly_only)}")
+
+    return replace(
+        parsed,
+        monthly_employee_count=len(monthly.employees),
+        matched_employee_count=len(punch_ids & monthly_ids),
+        punch_only_employees=punch_only,
+        monthly_only_employees=monthly_only,
+        source_warnings=warnings,
     )
 
 
@@ -228,24 +296,50 @@ def workday_overtime(
     last_same_day = max(same_day_punches)
     if last_same_day.time() < config.overtime_start_time:
         return 0.0, False, ""
-    if last_same_day.time() >= config.workday_meal_after:
-        return 2.0, True, ""
     if last_same_day.time() >= config.workday_overtime_2h_after:
-        return 2.0, False, ""
+        return 2.0, last_same_day.time() >= config.workday_meal_after, ""
     return 0.0, False, ""
 
 
-def restday_overtime(last_dt: datetime, base_date: date) -> tuple[float, bool]:
-    noon = datetime.combine(base_date, time(12, 0))
-    five_pm = datetime.combine(base_date, time(17, 0))
-    nine_pm = datetime.combine(base_date, time(21, 0))
-    if last_dt >= nine_pm:
-        return 8.0, True
-    if last_dt >= five_pm:
-        return 6.0, False
-    if last_dt >= noon:
-        return 3.0, False
-    return 0.0, False
+def weekend_overtime(punches: list[datetime], base_date: date) -> tuple[float, bool]:
+    if not punches:
+        return 0.0, False
+
+    first_dt = min(punches)
+    last_dt = max(punches)
+    overtime_periods = [
+        (time(9, 0), time(12, 0), 3.0),
+        (time(14, 0), time(17, 0), 3.0),
+        (time(17, 0), time(21, 0), 2.0),
+    ]
+    overtime_hours = sum(
+        hours
+        for start_time, end_time, hours in overtime_periods
+        if first_dt <= datetime.combine(base_date, start_time)
+        and last_dt >= datetime.combine(base_date, end_time)
+    )
+    overtime_hours = min(overtime_hours, 8.0)
+    return overtime_hours, overtime_hours == 8.0
+
+
+def holiday_overtime(punches: list[datetime], base_date: date) -> tuple[float, bool]:
+    if not punches:
+        return 0.0, False
+
+    first_dt = min(punches)
+    last_dt = max(punches)
+    overtime_periods = [
+        (time(9, 0), time(13, 0), 0.5),
+        (time(13, 0), time(17, 0), 0.5),
+    ]
+    overtime_days = sum(
+        days
+        for start_time, end_time, days in overtime_periods
+        if first_dt <= datetime.combine(base_date, start_time)
+        and last_dt >= datetime.combine(base_date, end_time)
+    )
+    overtime_days = min(overtime_days, 1.0)
+    return overtime_days, overtime_days == 1.0
 
 
 def is_late_for_workday(
@@ -316,35 +410,52 @@ def style_sheet(ws: Any, freeze_cell: str) -> None:
 
 
 def generate_summary(
-    input_file: Path, output_dir: Path, config: AttendanceConfig | None = None
+    input_file: Path,
+    output_dir: Path,
+    config: AttendanceConfig | None = None,
+    *,
+    monthly_file: Path | None = None,
 ) -> GenerationResult:
     active_config = config or AttendanceConfig()
     source = load_workbook(input_file, data_only=True)
     ws = source.active
-    report_start = parse_report_start(ws)
+    report_start, punch_report_end = parse_report_range(ws)
+    expected_date_count = (punch_report_end - report_start).days + 1
+    if ws.max_column - 6 < expected_date_count:
+        source.close()
+        raise ValueError("打卡时间表的每日打卡列少于统计日期天数")
+    monthly: MonthlyWorkbook | None = None
+    if monthly_file is not None:
+        monthly = parse_monthly_workbook(monthly_file)
+        if (report_start, punch_report_end) != (
+            monthly.report_start,
+            monthly.report_end,
+        ):
+            source.close()
+            raise ValueError("两张钉钉导出表的统计日期范围不一致")
 
     source_date_columns: list[tuple[int, date, object]] = []
     date_headers: dict[date, object] = {}
-    for offset, col in enumerate(range(7, ws.max_column + 1)):
+    for offset, col in enumerate(range(7, 7 + expected_date_count)):
         current_date = report_start + timedelta(days=offset)
         header = ws.cell(row=4, column=col).value
         source_date_columns.append((col, current_date, header))
         date_headers[current_date] = header
 
     ignored_dates = set(active_config.ignore_dates)
-    report_dates = []
-    for offset in range(ws.max_column - 6):
+    display_dates: list[date] = []
+    for offset in range(expected_date_count):
         current = report_start + timedelta(days=offset)
-        if current in ignored_dates:
-            continue
         if active_config.start_date is not None and current < active_config.start_date:
             continue
         if active_config.end_date is not None and current > active_config.end_date:
             continue
-        report_dates.append(current)
+        display_dates.append(current)
+    report_dates = [current for current in display_dates if current not in ignored_dates]
 
     detail_rows: list[DetailRow] = []
     person_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
+    punch_key_by_user_id: dict[str, tuple[str, str, str]] = {}
 
     for row in range(5, ws.max_row + 1):
         raw_name = ws.cell(row=row, column=1).value
@@ -353,7 +464,10 @@ def generate_summary(
         name = str(raw_name).strip()
         department = str(ws.cell(row=row, column=3).value or "").strip()
         employee_id = str(ws.cell(row=row, column=4).value or "").strip()
+        user_id = str(ws.cell(row=row, column=6).value or "").strip()
         key = (name, department, employee_id)
+        if user_id:
+            punch_key_by_user_id[user_id] = key
         person_summary.setdefault(
             key,
             {
@@ -363,7 +477,7 @@ def generate_summary(
                 "meal_dates": [],
                 "workday_hours": 0.0,
                 "weekend_hours": 0.0,
-                "holiday_hours": 0.0,
+                "holiday_days": 0.0,
                 "total_hours": 0.0,
                 "meal_count": 0,
             },
@@ -407,6 +521,7 @@ def generate_summary(
             rest_day = day_type != "工作日"
             absence = False
             overtime_hours = 0.0
+            holiday_overtime_days = 0.0
             meal = False
             note = ""
 
@@ -418,8 +533,10 @@ def generate_summary(
                 absence = True
                 note = "工作日只有一次打卡，按旷工标记"
             else:
-                if rest_day:
-                    overtime_hours, meal = restday_overtime(last_dt, current_date)
+                if day_type in WEEKEND_DAY_TYPES:
+                    overtime_hours, meal = weekend_overtime(punches, current_date)
+                elif rest_day:
+                    holiday_overtime_days, meal = holiday_overtime(punches, current_date)
                 else:
                     overtime_hours, meal, note = workday_overtime(
                         punches, current_date, active_config
@@ -427,7 +544,7 @@ def generate_summary(
                 if last_dt.date() > current_date:
                     note = note or "次日凌晨打卡，按跨天记录处理"
 
-            if overtime_hours > 0 or meal or absence or late:
+            if overtime_hours > 0 or holiday_overtime_days > 0 or meal or absence or late:
                 detail_rows.append(
                     DetailRow(
                         name=name,
@@ -438,6 +555,7 @@ def generate_summary(
                         raw_punches="\n".join(raw_parts),
                         last_punch=last_punch,
                         overtime_hours=overtime_hours,
+                        holiday_overtime_days=holiday_overtime_days,
                         meal=meal,
                         meal_amount=active_config.meal_allowance_amount if meal else 0,
                         absent=absence,
@@ -451,11 +569,16 @@ def generate_summary(
                 summary["ot_dates"].append(f"{fmt_date(current_date)}加班{overtime_hours:g}小时")
                 if day_type == "工作日":
                     summary["workday_hours"] = float(summary["workday_hours"]) + overtime_hours
-                elif day_type in WEEKEND_DAY_TYPES:
-                    summary["weekend_hours"] = float(summary["weekend_hours"]) + overtime_hours
                 else:
-                    summary["holiday_hours"] = float(summary["holiday_hours"]) + overtime_hours
+                    summary["weekend_hours"] = float(summary["weekend_hours"]) + overtime_hours
                 summary["total_hours"] = float(summary["total_hours"]) + overtime_hours
+            if holiday_overtime_days > 0:
+                summary["ot_dates"].append(
+                    f"{fmt_date(current_date)}加班{holiday_overtime_days:g}天"
+                )
+                summary["holiday_days"] = (
+                    float(summary["holiday_days"]) + holiday_overtime_days
+                )
             if absence:
                 summary["absence_dates"].append(f"{fmt_date(current_date)}旷工")
             if late:
@@ -464,9 +587,31 @@ def generate_summary(
                 summary["meal_dates"].append(f"{fmt_date(current_date)}有餐补")
                 summary["meal_count"] = int(summary["meal_count"]) + 1
 
+    source.close()
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / active_config.output_filename
-    write_workbook(output_path, detail_rows, person_summary, active_config)
+    computed_by_user_id: dict[str, dict[str, Any]] = {}
+    for user_id, key in punch_key_by_user_id.items():
+        summary = person_summary[key]
+        computed_by_user_id[user_id] = {
+            "workday_hours": summary["workday_hours"],
+            "weekend_hours": summary["weekend_hours"],
+            "holiday_days": summary["holiday_days"],
+            "meal_count": summary["meal_count"],
+            "meal_amount": int(summary["meal_count"])
+            * active_config.meal_allowance_amount,
+        }
+    write_workbook(
+        output_path,
+        detail_rows,
+        person_summary,
+        active_config,
+        monthly=monthly,
+        display_dates=display_dates,
+        date_headers=date_headers,
+        computed_by_user_id=computed_by_user_id,
+        ignored_dates=ignored_dates,
+    )
     stats = build_stats(detail_rows, len(person_summary))
     return GenerationResult(output_path=output_path, detail_rows=detail_rows, stats=stats)
 
@@ -476,11 +621,18 @@ def build_stats(detail_rows: list[DetailRow], people: int) -> SummaryStats:
     return SummaryStats(
         people=people,
         detail_records=len(detail_rows),
-        overtime_records=sum(1 for row in detail_rows if row.overtime_hours > 0),
+        overtime_records=sum(
+            1
+            for row in detail_rows
+            if row.overtime_hours > 0 or row.holiday_overtime_days > 0
+        ),
         absence_records=sum(1 for row in detail_rows if row.absent),
         late_records=sum(1 for row in detail_rows if row.late),
         meal_records=meal_records,
         total_overtime_hours=round(sum(row.overtime_hours for row in detail_rows), 2),
+        total_holiday_overtime_days=round(
+            sum(row.holiday_overtime_days for row in detail_rows), 2
+        ),
         total_meal_amount=sum(row.meal_amount for row in detail_rows),
     )
 
@@ -490,6 +642,12 @@ def write_workbook(
     detail_rows: list[DetailRow],
     person_summary: dict[tuple[str, str, str], dict[str, Any]],
     config: AttendanceConfig,
+    *,
+    monthly: MonthlyWorkbook | None = None,
+    display_dates: list[date] | None = None,
+    date_headers: dict[date, object] | None = None,
+    computed_by_user_id: dict[str, dict[str, Any]] | None = None,
+    ignored_dates: set[date] | None = None,
 ) -> None:
     wb = Workbook()
     detail_ws = wb.active
@@ -504,6 +662,7 @@ def write_workbook(
             "原始打卡时间",
             "下班最后打卡时间",
             "折算加班时长",
+            "折算节假日加班天数",
             "是否餐补",
             "餐补金额",
             "是否旷工",
@@ -522,6 +681,7 @@ def write_workbook(
                 row.raw_punches,
                 row.last_punch,
                 row.overtime_hours,
+                row.holiday_overtime_days,
                 "是" if row.meal else "否",
                 row.meal_amount,
                 "是" if row.absent else "否",
@@ -530,10 +690,12 @@ def write_workbook(
             ]
         )
     for cell in detail_ws["D"][1:]:
-        cell.number_format = "m月d日"
+        cell.number_format = "yyyy-mm-dd"
     for cell in detail_ws["H"][1:]:
         cell.number_format = "0.00"
-    for cell in detail_ws["J"][1:]:
+    for cell in detail_ws["I"][1:]:
+        cell.number_format = "0.00"
+    for cell in detail_ws["K"][1:]:
         cell.number_format = "#,##0"
     style_sheet(detail_ws, "A2")
 
@@ -549,8 +711,8 @@ def write_workbook(
             "餐补日期",
             "工作日加班时长",
             "周末加班时长",
-            "节假日加班时长",
-            "本月加班时长合计",
+            "节假日加班天数",
+            "工作日及周末加班时长合计",
             "餐补次数",
             "餐补金额合计",
         ]
@@ -558,10 +720,16 @@ def write_workbook(
     for (name, department, employee_id), summary in sorted(person_summary.items()):
         workday_hours = round(float(summary["workday_hours"]), 2)
         weekend_hours = round(float(summary["weekend_hours"]), 2)
-        holiday_hours = round(float(summary["holiday_hours"]), 2)
+        holiday_days = round(float(summary["holiday_days"]), 2)
         total_hours = round(float(summary["total_hours"]), 2)
         meal_count = int(summary["meal_count"])
-        if total_hours == 0 and meal_count == 0 and not summary["absence_dates"] and not summary["late_dates"]:
+        if (
+            total_hours == 0
+            and holiday_days == 0
+            and meal_count == 0
+            and not summary["absence_dates"]
+            and not summary["late_dates"]
+        ):
             continue
         summary_ws.append(
             [
@@ -574,7 +742,7 @@ def write_workbook(
                 "\n".join(summary["meal_dates"]),
                 workday_hours,
                 weekend_hours,
-                holiday_hours,
+                holiday_days,
                 total_hours,
                 meal_count,
                 meal_count * config.meal_allowance_amount,
@@ -596,10 +764,12 @@ def write_workbook(
         ["工作日", "表头为空或为阿拉伯数字时按工作日处理，用于支持周末补班"],
         ["周末", "表头为“六”“日”“周六”“周日”“周末”时按周末处理，不按真实星期几推断"],
         ["节假日", "表头为非数字、且不是周末标记的文本时按节假日处理，如“xx节”“法假”"],
-        ["工作日加班", "达到加班起始时间后才进入加班判断；达到2小时加班阈值算2小时；次日凌晨打卡截止前有打卡记录算4小时"],
-        ["工作日餐补", "最后打卡时间达到工作日餐补阈值或更晚，或次日凌晨打卡截止前有打卡记录，享受餐补"],
-        ["休息日/节假日加班", "最后打卡到12:00算3小时；17:00以后算6小时；21:00以后算8小时"],
-        ["休息日/节假日餐补", "最后打卡达到21:00或更晚，享受餐补"],
+        ["工作日加班", "出勤至21:00且不到次日00:00按2小时折算；次日凌晨打卡截止前有有效跨天打卡按4小时折算"],
+        ["工作日餐补", "出勤至22:00或更晚享受餐补；有效跨天至次日的4小时加班也享受餐补"],
+        ["周末加班", "完整覆盖09:00-12:00算3小时，完整覆盖14:00-17:00算3小时，完整覆盖17:00-21:00算2小时；各时段可累加，每天最多8小时"],
+        ["周末餐补", "加班折算满8小时，享受餐补"],
+        ["节假日加班", "完整覆盖09:00-13:00算0.5天，完整覆盖13:00-17:00算0.5天；两个时段可累加，每天最多1天"],
+        ["节假日餐补", "加班折算满1天，享受餐补"],
         ["迟到", "工作日当天第一条凌晨打卡截止及之后的打卡晚于上班时间，标记迟到；周末/节假日不判迟到"],
         ["凌晨打卡截止", "次日凌晨打卡截止前打卡是跨天加班的打卡约束"],
         ["旷工", "工作日只有一个打卡时间视为旷工；周末/节假日只有一个打卡时间不视为旷工"],
@@ -607,5 +777,17 @@ def write_workbook(
     for rule_row in rules:
         rules_ws.append(rule_row)
     style_sheet(rules_ws, "A2")
+
+    if monthly is not None:
+        if not display_dates:
+            raise ValueError("统计日期范围内没有可输出的日期")
+        write_attendance_summary_sheet(
+            wb,
+            monthly,
+            display_dates,
+            date_headers or {},
+            computed_by_user_id or {},
+            ignored_dates or set(),
+        )
 
     wb.save(output_path)

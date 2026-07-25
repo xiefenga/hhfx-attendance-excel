@@ -157,6 +157,13 @@ async function createWindow(): Promise<void> {
     minHeight: 640,
     show: false,
     title: "考勤汇总工具",
+    backgroundColor: "#fdf3ec",
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: "#fffaf7",
+      symbolColor: "#73737b",
+      height: 44
+    },
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -178,9 +185,9 @@ async function createWindow(): Promise<void> {
 
 function registerIpc(): void {
   ipcMain.handle("attendance:hello", async () => ensureWorker());
-  ipcMain.handle("attendance:select-input", async () => {
+  ipcMain.handle("attendance:select-input", async (_event, kind: "punch" | "monthly") => {
     const options: Electron.OpenDialogOptions = {
-      title: "选择原始考勤表",
+      title: kind === "monthly" ? "选择钉钉月度汇总表" : "选择钉钉打卡时间表",
       properties: ["openFile"],
       filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }]
     };
@@ -191,7 +198,8 @@ function registerIpc(): void {
       return null;
     }
     const selectedPath = result.filePaths[0];
-    return { path: selectedPath, name: path.basename(selectedPath) };
+    const selectedStats = await fs.promises.stat(selectedPath);
+    return { path: selectedPath, name: path.basename(selectedPath), size: selectedStats.size };
   });
   ipcMain.handle("attendance:select-output", async (_event, defaultName: string) => {
     const options: Electron.SaveDialogOptions = {
@@ -204,16 +212,23 @@ function registerIpc(): void {
       : await dialog.showSaveDialog(options);
     return result.canceled ? null : result.filePath;
   });
-  ipcMain.handle("attendance:parse", async (_event, inputPath: string) => {
+  ipcMain.handle("attendance:parse", async (_event, inputPath: string, monthlyPath: string) => {
     await ensureWorker();
-    return requestWorker("parse", { input_path: inputPath });
+    return requestWorker("parse", { input_path: inputPath, monthly_path: monthlyPath });
   });
   ipcMain.handle(
     "attendance:generate",
-    async (_event, inputPath: string, outputPath: string, config: Record<string, unknown>) => {
+    async (
+      _event,
+      inputPath: string,
+      monthlyPath: string,
+      outputPath: string,
+      config: Record<string, unknown>
+    ) => {
       await ensureWorker();
       return requestWorker("generate", {
         input_path: inputPath,
+        monthly_path: monthlyPath,
         output_path: outputPath,
         config
       });

@@ -20,6 +20,7 @@ export interface SummaryStats {
   late_records: number;
   meal_records: number;
   total_overtime_hours: number;
+  total_holiday_overtime_days: number;
   total_meal_amount: number;
 }
 
@@ -44,11 +45,18 @@ export interface ParsedWorkbook {
   non_workdays: ParsedNonWorkday[];
   employee_count: number;
   date_count: number;
+  monthly_employee_count: number;
+  matched_employee_count: number;
+  punch_only_employees: string[];
+  monthly_only_employees: string[];
+  source_warnings: string[];
 }
 
 export interface ParseResponse {
   filename: string;
   source_path: string;
+  monthly_filename: string;
+  monthly_source_path: string;
   detected: ParsedWorkbook;
 }
 
@@ -66,15 +74,17 @@ export interface WorkerHello {
 export interface DesktopSelection {
   path: string;
   name: string;
+  size: number;
 }
 
 export interface AttendanceDesktopApi {
   hello(): Promise<WorkerHello>;
-  selectInput(): Promise<DesktopSelection | null>;
+  selectInput(kind: "punch" | "monthly"): Promise<DesktopSelection | null>;
   selectOutput(defaultName: string): Promise<string | null>;
-  parse(inputPath: string): Promise<ParseResponse>;
+  parse(inputPath: string, monthlyPath: string): Promise<ParseResponse>;
   generate(
     inputPath: string,
+    monthlyPath: string,
     outputPath: string,
     config: AttendanceConfig
   ): Promise<GenerateResponse>;
