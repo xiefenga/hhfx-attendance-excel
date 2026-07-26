@@ -4,7 +4,8 @@ param(
     [string]$InstallerPath,
     [Parameter(Mandatory)]
     [string]$CertificatePath,
-    [string]$OutputDirectory = (Join-Path (Get-Location) "attendance-ledger-internal-release")
+    [string]$OutputDirectory = (Join-Path (Get-Location) "attendance-ledger-internal-release"),
+    [switch]$AllowUntrustedSelfSigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,7 +21,13 @@ $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
     [IO.Path]::GetFullPath($CertificatePath)
 )
 $signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
-if ($signature.Status -ne "Valid") {
+$isSelfSigned = $certificate.Subject -eq $certificate.Issuer
+$statusIsAllowed = $signature.Status -eq "Valid" -or (
+    $AllowUntrustedSelfSigned -and
+    $isSelfSigned -and
+    $signature.Status -eq "NotTrusted"
+)
+if (-not $statusIsAllowed) {
     throw "The installer signature status is $($signature.Status)."
 }
 if (

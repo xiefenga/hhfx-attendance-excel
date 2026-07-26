@@ -94,24 +94,29 @@ jobs:
 
       - name: Prepare Windows signing certificate
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        timeout-minutes: 5
         shell: pwsh
         run: |
+          Write-Host "Decoding the PFX secret..."
           $certificatePath = Join-Path $env:RUNNER_TEMP "attendance-certificate.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+
+          Write-Host "Opening the PFX with the supplied password..."
           $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
           $certificate = Get-PfxCertificate -FilePath $certificatePath -Password $securePassword
+          if (-not $certificate.HasPrivateKey) {
+            throw "The supplied PFX does not contain a private key."
+          }
+
+          Write-Host "Exporting the public certificate..."
           $publicCertificatePath = Join-Path $env:RUNNER_TEMP "attendance-certificate.cer"
           Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
-          if ($certificate.Subject -eq $certificate.Issuer) {
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
-          }
+
+          $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
           "WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_PUBLIC_CERTIFICATE_FILE=$publicCertificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_CERTIFICATE_SELF_SIGNED=$isSelfSigned" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Certificate prepared. Self-signed: $isSelfSigned"
 
       - name: Build installers
         run: npm run make -- --arch=${{ matrix.arch }}
@@ -132,15 +137,22 @@ jobs:
           if ($targets.Count -lt 3) {
             throw "未找到全部签名验证目标，实际找到 $($targets.Count) 个。"
           }
+          $allowedStatuses = @("Valid")
+          if ($env:WINDOWS_CERTIFICATE_SELF_SIGNED -eq "True") {
+            $allowedStatuses += "NotTrusted"
+          }
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
-            if ($signature.Status -ne "Valid") {
+            if ($signature.Status.ToString() -notin $allowedStatuses) {
               throw "$($target.FullName) 的签名状态为 $($signature.Status)。"
+            }
+            if ($null -eq $signature.SignerCertificate) {
+              throw "$($target.FullName) 没有可读取的签名证书。"
             }
             if ($signature.SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint) {
               throw "$($target.FullName) 不是由预期证书签名。"
             }
-            Write-Host "签名有效：$($target.FullName)"
+            Write-Host "签名和指纹有效：$($target.FullName) [$($signature.Status)]"
           }
 
       - name: Prepare internal Windows release bundle
@@ -151,10 +163,15 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "预期找到一个 Squirrel Setup.exe，实际找到 $($installers.Count) 个。"
           }
-          ./packaging/windows/New-InternalReleaseBundle.ps1 `
-            -InstallerPath $installers[0].FullName `
-            -CertificatePath $env:WINDOWS_PUBLIC_CERTIFICATE_FILE `
-            -OutputDirectory "out/attendance-ledger-internal-release"
+          $bundleArguments = @{
+            InstallerPath = $installers[0].FullName
+            CertificatePath = $env:WINDOWS_PUBLIC_CERTIFICATE_FILE
+            OutputDirectory = "out/attendance-ledger-internal-release"
+          }
+          if ($env:WINDOWS_CERTIFICATE_SELF_SIGNED -eq "True") {
+            $bundleArguments.AllowUntrustedSelfSigned = $true
+          }
+          ./packaging/windows/New-InternalReleaseBundle.ps1 @bundleArguments
 
       - name: Upload installers
         uses: actions/upload-artifact@v4

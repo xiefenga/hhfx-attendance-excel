@@ -48,7 +48,11 @@ $pfx = "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger-sig
 工作流会把证书写入 runner 临时目录。Electron Packager 递归签署应用主程序、DLL、Node
 原生模块和 `attendance-worker.exe`，Squirrel maker 再签署安装器。构建完成后，工作流会
 验证主程序、sidecar 和 `Setup.exe` 的签名及证书指纹，并在 Windows artifact 中生成
-可以直接分发的 `internal-windows-release` 目录。
+可以直接分发的 `attendance-ledger-internal-release` 目录。
+
+CI 不会把自签名证书加入 runner 的受信任根，避免无界面的安全确认阻塞构建。自签名证书
+在 CI 中允许返回 `NotTrusted`，但文件必须具有有效签名结构、不能出现哈希不匹配，并且
+签名证书指纹必须与 PFX 完全一致。目标电脑上的安装脚本仍会在管理员确认后安装公钥。
 
 ## 三、本地 Windows 构建
 
