@@ -22,19 +22,20 @@ $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
 )
 $signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
 $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
+$untrustedStatuses = @("NotTrusted", "UnknownError")
 $statusIsAllowed = $signature.Status -eq "Valid" -or (
     $AllowUntrustedSelfSigned -and
     $isSelfSigned -and
-    $signature.Status -eq "NotTrusted"
+    $signature.Status.ToString() -in $untrustedStatuses
 )
-if (-not $statusIsAllowed) {
-    throw "The installer signature status is $($signature.Status)."
-}
 if (
     $null -eq $signature.SignerCertificate -or
     $signature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint
 ) {
     throw "The installer signature does not match the supplied public certificate."
+}
+if (-not $statusIsAllowed) {
+    throw "The installer signature status is $($signature.Status): $($signature.StatusMessage)"
 }
 
 $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)

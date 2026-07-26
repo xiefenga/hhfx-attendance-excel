@@ -113,18 +113,6 @@ jobs:
           Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
 
           $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
-          if ($isSelfSigned) {
-            Write-Host "Trusting the self-signed certificate non-interactively for this ephemeral runner..."
-            & certutil.exe -user -f -addstore Root $publicCertificatePath
-            if ($LASTEXITCODE -ne 0) {
-              throw "certutil failed to add the certificate to CurrentUser Root."
-            }
-            & certutil.exe -user -f -addstore TrustedPublisher $publicCertificatePath
-            if ($LASTEXITCODE -ne 0) {
-              throw "certutil failed to add the certificate to CurrentUser TrustedPublisher."
-            }
-          }
-
           "WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_PUBLIC_CERTIFICATE_FILE=$publicCertificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_CERTIFICATE_SELF_SIGNED=$isSelfSigned" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -151,18 +139,18 @@ jobs:
           }
           $allowedStatuses = @("Valid")
           if ($env:WINDOWS_CERTIFICATE_SELF_SIGNED -eq "True") {
-            $allowedStatuses += "NotTrusted"
+            $allowedStatuses += @("NotTrusted", "UnknownError")
           }
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
-            if ($signature.Status.ToString() -notin $allowedStatuses) {
-              throw "$($target.FullName) 的签名状态为 $($signature.Status)。"
-            }
             if ($null -eq $signature.SignerCertificate) {
               throw "$($target.FullName) 没有可读取的签名证书。"
             }
             if ($signature.SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint) {
               throw "$($target.FullName) 不是由预期证书签名。"
+            }
+            if ($signature.Status.ToString() -notin $allowedStatuses) {
+              throw "$($target.FullName) 的签名状态为 $($signature.Status)：$($signature.StatusMessage)"
             }
             Write-Host "签名和指纹有效：$($target.FullName) [$($signature.Status)]"
           }
