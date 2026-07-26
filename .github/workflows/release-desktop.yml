@@ -113,6 +113,16 @@ jobs:
           Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
 
           $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
+          if ($isSelfSigned) {
+            Write-Host "Trusting the self-signed certificate for this ephemeral runner..."
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
+          }
+
           "WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_PUBLIC_CERTIFICATE_FILE=$publicCertificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "WINDOWS_CERTIFICATE_SELF_SIGNED=$isSelfSigned" | Out-File -FilePath $env:GITHUB_ENV -Append
