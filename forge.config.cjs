@@ -2,6 +2,9 @@ const path = require("node:path");
 
 const projectRoot = __dirname;
 const extraResource = [path.join(projectRoot, "resources", "sidecar", "attendance-worker")];
+const iconDirectory = path.join(projectRoot, "assets", "icons");
+const macIcon = path.join(iconDirectory, "attendance-ledger.icns");
+const windowsIcon = path.join(iconDirectory, "attendance-ledger.ico");
 
 const packagerConfig = {
   asar: true,
@@ -15,6 +18,7 @@ const packagerConfig = {
 };
 
 if (process.platform === "darwin") {
+  packagerConfig.icon = macIcon;
   packagerConfig.osxSign = process.env.MACOS_CERTIFICATE
     ? { continueOnError: false }
     : {
@@ -26,6 +30,10 @@ if (process.platform === "darwin") {
         }),
         continueOnError: false
       };
+}
+
+if (process.platform === "win32") {
+  packagerConfig.icon = windowsIcon;
 }
 
 if (
@@ -45,7 +53,8 @@ const squirrelConfig = {
   name: "attendance_ledger",
   authors: "Attendance Ledger",
   description: "离线考勤 Excel 解析与汇总工具",
-  setupExe: "Attendance Ledger Setup.exe"
+  setupExe: "Attendance Ledger Setup.exe",
+  setupIcon: windowsIcon
 };
 
 if (process.env.WINDOWS_CERTIFICATE_FILE) {
@@ -69,7 +78,7 @@ module.exports = {
     },
     {
       name: "@electron-forge/maker-dmg",
-      config: { format: "ULFO" }
+      config: { format: "ULFO", icon: macIcon }
     },
     {
       name: "@electron-forge/maker-zip",
