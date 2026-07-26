@@ -156,7 +156,7 @@ async function createWindow(): Promise<void> {
     minWidth: 760,
     minHeight: 640,
     show: false,
-    title: "考勤汇总工具",
+    title: "Attendance Ledger",
     backgroundColor: "#fdf3ec",
     titleBarStyle: "hidden",
     titleBarOverlay: {

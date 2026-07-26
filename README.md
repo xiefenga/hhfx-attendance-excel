@@ -1,4 +1,4 @@
-# 考勤汇总工具
+# Attendance Ledger
 
 一个完全离线的桌面应用：读取钉钉导出的“打卡时间”和“月度汇总”两张 Excel，校验人员、日期和规则参数，并生成包含每日上下午状态、加班、旷工、迟到及餐补的汇总表。
 
@@ -93,6 +93,10 @@ git push origin v0.1.0
 ```
 
 未提供正式证书时，macOS 使用 ad-hoc 签名，Windows 不签名。正式签名使用工作流中声明的 macOS/Windows 仓库 Secrets。
+
+仅在少量受控 Windows 电脑内部使用时，可以免费使用自签名证书。证书生成、完整签名、
+安装目录整理和目标电脑一键安装流程见
+[Windows 内部免费签名与安装](docs/windows-internal-signing.md)。
 
 ## 命令行生成
 

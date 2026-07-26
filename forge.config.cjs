@@ -5,9 +5,9 @@ const extraResource = [path.join(projectRoot, "resources", "sidecar", "attendanc
 
 const packagerConfig = {
   asar: true,
-  appBundleId: "com.attendanceexcel.desktop",
+  appBundleId: "com.attendanceledger.desktop",
   appCategoryType: "public.app-category.productivity",
-  executableName: "attendance-excel",
+  executableName: "attendance-ledger",
   extraResource,
   ignore: [
     /^\/(?!dist(?:\/|$)|package\.json$).+/
@@ -42,14 +42,21 @@ if (
 }
 
 const squirrelConfig = {
-  name: "attendance_excel",
-  authors: "Attendance Excel",
-  description: "离线考勤 Excel 解析与汇总工具"
+  name: "attendance_ledger",
+  authors: "Attendance Ledger",
+  description: "离线考勤 Excel 解析与汇总工具",
+  setupExe: "Attendance Ledger Setup.exe"
 };
 
 if (process.env.WINDOWS_CERTIFICATE_FILE) {
-  squirrelConfig.certificateFile = process.env.WINDOWS_CERTIFICATE_FILE;
-  squirrelConfig.certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+  const windowsSign = {
+    certificateFile: process.env.WINDOWS_CERTIFICATE_FILE,
+    certificatePassword: process.env.WINDOWS_CERTIFICATE_PASSWORD,
+    description: "Attendance Ledger",
+    hashes: ["sha256"]
+  };
+  packagerConfig.windowsSign = windowsSign;
+  squirrelConfig.windowsSign = windowsSign;
 }
 
 module.exports = {

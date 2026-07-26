@@ -19,15 +19,15 @@ jobs:
           - name: macOS Apple Silicon
             os: macos-15
             arch: arm64
-            artifact: desktop-macos-arm64
+            artifact: attendance-ledger-macos-arm64
           - name: macOS Intel
             os: macos-15-intel
             arch: x64
-            artifact: desktop-macos-x64
+            artifact: attendance-ledger-macos-x64
           - name: Windows x64
             os: windows-2025
             arch: x64
-            artifact: desktop-windows-x64
+            artifact: attendance-ledger-windows-x64
     runs-on: ${{ matrix.os }}
     env:
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
@@ -98,16 +98,71 @@ jobs:
         run: |
           $certificatePath = Join-Path $env:RUNNER_TEMP "attendance-certificate.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Get-PfxCertificate -FilePath $certificatePath -Password $securePassword
+          $publicCertificatePath = Join-Path $env:RUNNER_TEMP "attendance-certificate.cer"
+          Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
+          if ($certificate.Subject -eq $certificate.Issuer) {
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+            Import-Certificate `
+              -FilePath $publicCertificatePath `
+              -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
+          }
           "WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "WINDOWS_PUBLIC_CERTIFICATE_FILE=$publicCertificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build installers
         run: npm run make -- --arch=${{ matrix.arch }}
+
+      - name: Verify Windows code signatures
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        shell: pwsh
+        run: |
+          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $expectedCertificate = Get-PfxCertificate `
+            -FilePath $env:WINDOWS_CERTIFICATE_FILE `
+            -Password $securePassword
+          $targets = @(
+            Get-ChildItem out -Recurse -File -Filter "attendance-ledger.exe"
+            Get-ChildItem out -Recurse -File -Filter "attendance-worker.exe"
+            Get-ChildItem out -Recurse -File -Filter "*Setup.exe"
+          )
+          if ($targets.Count -lt 3) {
+            throw "未找到全部签名验证目标，实际找到 $($targets.Count) 个。"
+          }
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "$($target.FullName) 的签名状态为 $($signature.Status)。"
+            }
+            if ($signature.SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint) {
+              throw "$($target.FullName) 不是由预期证书签名。"
+            }
+            Write-Host "签名有效：$($target.FullName)"
+          }
+
+      - name: Prepare internal Windows release bundle
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem out/make -Recurse -File -Filter "*Setup.exe")
+          if ($installers.Count -ne 1) {
+            throw "预期找到一个 Squirrel Setup.exe，实际找到 $($installers.Count) 个。"
+          }
+          ./packaging/windows/New-InternalReleaseBundle.ps1 `
+            -InstallerPath $installers[0].FullName `
+            -CertificatePath $env:WINDOWS_PUBLIC_CERTIFICATE_FILE `
+            -OutputDirectory "out/attendance-ledger-internal-release"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: out/make/**/*
+          path: |
+            out/make/**/*
+            out/attendance-ledger-internal-release/**/*
           if-no-files-found: error
 
   release:

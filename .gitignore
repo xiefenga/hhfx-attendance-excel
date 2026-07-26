@@ -12,3 +12,8 @@ resources/sidecar/
 *.tsbuildinfo
 out/
 outputs/
+*.pfx
+*.p12
+*.cer
+*.cer.thumbprint.txt
+attendance-ledger-internal-release/

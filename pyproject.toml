@@ -1,5 +1,5 @@
 [project]
-name = "attendance-excel"
+name = "attendance-ledger"
 version = "0.1.0"
 description = "Local attendance Excel parser and summary generator"
 requires-python = ">=3.11"

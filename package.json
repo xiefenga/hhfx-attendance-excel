@@ -1,9 +1,9 @@
 {
-  "name": "attendance-excel-desktop",
-  "productName": "考勤汇总工具",
+  "name": "attendance-ledger",
+  "productName": "Attendance Ledger",
   "version": "0.1.0",
   "description": "离线考勤 Excel 解析与汇总工具",
-  "author": "Attendance Excel",
+  "author": "Attendance Ledger",
   "license": "UNLICENSED",
   "private": true,
   "main": "./dist/main/index.js",
