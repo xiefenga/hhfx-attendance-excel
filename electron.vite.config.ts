@@ -5,7 +5,13 @@ export default defineConfig(({ command }) => {
   const isDevelopment = command === "serve";
 
   return {
-    main: {},
+    main: {
+      build: {
+        externalizeDeps: {
+          exclude: ["electron-squirrel-startup"]
+        }
+      }
+    },
     preload: {},
     renderer: {
       base: "./",

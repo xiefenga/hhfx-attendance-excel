@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import squirrelStartup from "electron-squirrel-startup";
 
 import type { WorkerHello } from "../shared/ipc-contract";
 
@@ -239,30 +240,34 @@ function registerIpc(): void {
   });
 }
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+if (squirrelStartup) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
-  app.whenReady().then(async () => {
-    registerIpc();
-    await createWindow();
-    ensureWorker().catch((error) => console.error("Python worker failed to start", error));
-  });
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow().catch((error) => console.error("Failed to create window", error));
-    }
-  });
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
-  });
-  app.on("before-quit", () => {
-    if (worker && !worker.killed) worker.kill();
-  });
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    });
+    app.whenReady().then(async () => {
+      registerIpc();
+      await createWindow();
+      ensureWorker().catch((error) => console.error("Python worker failed to start", error));
+    });
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow().catch((error) => console.error("Failed to create window", error));
+      }
+    });
+    app.on("window-all-closed", () => {
+      if (process.platform !== "darwin") app.quit();
+    });
+    app.on("before-quit", () => {
+      if (worker && !worker.killed) worker.kill();
+    });
+  }
 }
