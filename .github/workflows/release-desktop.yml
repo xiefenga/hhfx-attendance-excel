@@ -177,8 +177,26 @@ jobs:
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
         shell: pwsh
         run: |
-          ./packaging/windows/Test-InternalReleaseArchive.ps1 `
-            -ArchivePath "out/Attendance-Ledger-Windows-x64.zip"
+          $archivePath = "out/Attendance-Ledger-Windows-x64.zip"
+          ./packaging/windows/Test-InternalReleaseArchive.ps1 -ArchivePath $archivePath
+
+          $extractionDirectory = Join-Path `
+            $env:RUNNER_TEMP `
+            "Attendance Ledger ZIP Validation"
+          Expand-Archive `
+            -LiteralPath $archivePath `
+            -DestinationPath $extractionDirectory
+          $installerScript = Join-Path `
+            $extractionDirectory `
+            "Attendance Ledger Files/Install-AttendanceLedger.ps1"
+          & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $installerScript `
+            -ValidatePathsOnly
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows PowerShell installation path validation failed with exit code $LASTEXITCODE."
+          }
 
       - name: Upload macOS installers
         if: runner.os == 'macOS'

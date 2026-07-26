@@ -1,10 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$CertificatePath = (Join-Path $PSScriptRoot "attendance-ledger.cer"),
+    [string]$CertificatePath = "",
     [string]$InstallerPath = "",
-    [string]$ExpectedThumbprintPath = (
-        Join-Path $PSScriptRoot "attendance-ledger.cer.thumbprint.txt"
-    )
+    [string]$ExpectedThumbprintPath = "",
+    [switch]$ValidatePathsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +11,51 @@ Set-StrictMode -Version Latest
 
 if ($env:OS -ne "Windows_NT") {
     throw "This script can only run on Windows."
+}
+
+$scriptDirectory = Split-Path -Parent $PSCommandPath
+if ([string]::IsNullOrWhiteSpace($scriptDirectory)) {
+    throw "Unable to resolve the installation script directory."
+}
+
+if (-not $CertificatePath) {
+    $CertificatePath = Join-Path $scriptDirectory "attendance-ledger.cer"
+}
+if (-not $ExpectedThumbprintPath) {
+    $ExpectedThumbprintPath = Join-Path `
+        $scriptDirectory `
+        "attendance-ledger.cer.thumbprint.txt"
+}
+if (-not $InstallerPath) {
+    $installers = @(
+        Get-ChildItem -LiteralPath $scriptDirectory -Filter "*Setup.exe" -File
+    )
+    if ($installers.Count -ne 1) {
+        throw "The release directory must contain exactly one *Setup.exe file; found $($installers.Count)."
+    }
+    $InstallerPath = $installers[0].FullName
+}
+
+$CertificatePath = [IO.Path]::GetFullPath($CertificatePath)
+$InstallerPath = [IO.Path]::GetFullPath($InstallerPath)
+$ExpectedThumbprintPath = [IO.Path]::GetFullPath($ExpectedThumbprintPath)
+
+foreach ($requiredPath in @(
+    $CertificatePath,
+    $InstallerPath,
+    $ExpectedThumbprintPath
+)) {
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Required release file not found: $requiredPath"
+    }
+}
+
+if ($ValidatePathsOnly) {
+    Write-Host "Installation bundle paths are valid:" -ForegroundColor Green
+    Write-Host "  Certificate: $CertificatePath"
+    Write-Host "  Thumbprint:  $ExpectedThumbprintPath"
+    Write-Host "  Installer:   $InstallerPath"
+    return
 }
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -26,7 +70,13 @@ if (-not $isAdministrator) {
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "`"$PSCommandPath`""
+        "`"$PSCommandPath`"",
+        "-CertificatePath",
+        "`"$CertificatePath`"",
+        "-InstallerPath",
+        "`"$InstallerPath`"",
+        "-ExpectedThumbprintPath",
+        "`"$ExpectedThumbprintPath`""
     )
     $elevated = Start-Process `
         -FilePath "powershell.exe" `
@@ -37,26 +87,8 @@ if (-not $isAdministrator) {
     exit $elevated.ExitCode
 }
 
-if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
-    throw "Public certificate not found: $CertificatePath"
-}
-
-if (-not $InstallerPath) {
-    $installers = @(
-        Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*Setup.exe" -File
-    )
-    if ($installers.Count -ne 1) {
-        throw "The release directory must contain exactly one *Setup.exe file; found $($installers.Count)."
-    }
-    $InstallerPath = $installers[0].FullName
-}
-
-if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
-    throw "Installer not found: $InstallerPath"
-}
-
 $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
-    [IO.Path]::GetFullPath($CertificatePath)
+    $CertificatePath
 )
 $codeSigningOid = "1.3.6.1.5.5.7.3.3"
 $hasCodeSigningUsage = $false
@@ -75,13 +107,11 @@ if (-not $hasCodeSigningUsage) {
     throw "The certificate does not permit code signing. Installation stopped."
 }
 
-if (Test-Path -LiteralPath $ExpectedThumbprintPath -PathType Leaf) {
-    $expectedThumbprint = (
-        Get-Content -LiteralPath $ExpectedThumbprintPath -Raw
-    ).Trim().Replace(" ", "").ToUpperInvariant()
-    if ($expectedThumbprint -ne $certificate.Thumbprint) {
-        throw "The certificate thumbprint does not match the release manifest. Installation stopped."
-    }
+$expectedThumbprint = (
+    Get-Content -LiteralPath $ExpectedThumbprintPath -Raw
+).Trim().Replace(" ", "").ToUpperInvariant()
+if ($expectedThumbprint -ne $certificate.Thumbprint) {
+    throw "The certificate thumbprint does not match the release manifest. Installation stopped."
 }
 
 Write-Host "Installing the internal code-signing certificate..."
