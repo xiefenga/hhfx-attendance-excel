@@ -17,3 +17,4 @@ outputs/
 *.cer
 *.cer.thumbprint.txt
 attendance-ledger-internal-release/
+Attendance-Ledger-Windows-x64.zip

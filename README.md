@@ -92,6 +92,10 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Windows x64 的 Actions artifact 和 GitHub Release 只包含
+`Attendance-Ledger-Windows-x64.zip`；解压后双击根目录的安装脚本即可依次安装证书和应用。
+macOS 制品保持 Electron Forge 的原始输出。
+
 未提供正式证书时，macOS 使用 ad-hoc 签名，Windows 不签名。正式签名使用工作流中声明的 macOS/Windows 仓库 Secrets。
 
 仅在少量受控 Windows 电脑内部使用时，可以免费使用自签名证书。证书生成、完整签名、

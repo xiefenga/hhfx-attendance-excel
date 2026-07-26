@@ -166,20 +166,34 @@ jobs:
           $bundleArguments = @{
             InstallerPath = $installers[0].FullName
             CertificatePath = $env:WINDOWS_PUBLIC_CERTIFICATE_FILE
-            OutputDirectory = "out/attendance-ledger-internal-release"
+            ArchivePath = "out/Attendance-Ledger-Windows-x64.zip"
           }
           if ($env:WINDOWS_CERTIFICATE_SELF_SIGNED -eq "True") {
             $bundleArguments.AllowUntrustedSelfSigned = $true
           }
           ./packaging/windows/New-InternalReleaseBundle.ps1 @bundleArguments
 
-      - name: Upload installers
+      - name: Verify internal Windows release ZIP
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        shell: pwsh
+        run: |
+          ./packaging/windows/Test-InternalReleaseArchive.ps1 `
+            -ArchivePath "out/Attendance-Ledger-Windows-x64.zip"
+
+      - name: Upload macOS installers
+        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            out/make/**/*
-            out/attendance-ledger-internal-release/**/*
+          path: out/make/**/*
+          if-no-files-found: error
+
+      - name: Upload Windows release ZIP
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/Attendance-Ledger-Windows-x64.zip
           if-no-files-found: error
 
   release:

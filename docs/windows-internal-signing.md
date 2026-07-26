@@ -48,7 +48,8 @@ $pfx = "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger-sig
 工作流会把证书写入 runner 临时目录。Electron Packager 递归签署应用主程序、DLL、Node
 原生模块和 `attendance-worker.exe`，Squirrel maker 再签署安装器。构建完成后，工作流会
 验证主程序、sidecar 和 `Setup.exe` 的签名及证书指纹，并在 Windows artifact 中生成
-可以直接分发的 `attendance-ledger-internal-release` 目录。
+可以直接分发的 `Attendance-Ledger-Windows-x64.zip`。GitHub Actions artifact 和
+GitHub Release 都只发布这个 Windows ZIP，不再附带松散的 Squirrel 文件。
 
 CI 读取 PFX 时会显式传入密码，不会等待交互输入，也不会尝试修改 GitHub runner 的证书
 信任库。自签名证书在 CI 中可能返回 `NotTrusted` 或 `UnknownError`，但签名证书必须存在
@@ -72,32 +73,36 @@ Remove-Item Env:WINDOWS_CERTIFICATE_PASSWORD
 Remove-Item Env:WINDOWS_CERTIFICATE_FILE
 ```
 
-## 四、整理内部安装目录
+## 四、生成内部安装 ZIP
 
 找到 `out\make\` 下生成的 `*Setup.exe`，执行：
 
 ```powershell
 .\packaging\windows\New-InternalReleaseBundle.ps1 `
   -InstallerPath ".\out\make\squirrel.windows\x64\Attendance Ledger Setup.exe" `
-  -CertificatePath "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger.cer"
+  -CertificatePath "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger.cer" `
+  -ArchivePath ".\out\Attendance-Ledger-Windows-x64.zip"
 ```
 
-脚本先核对安装器签名，然后生成 `attendance-ledger-internal-release`：
+脚本先核对安装器签名，然后生成单个 ZIP。解压后的结构如下：
 
 ```text
-attendance-ledger-internal-release/
+Attendance-Ledger-Windows-x64/
 ├── Install Attendance Ledger.cmd
-├── Install-AttendanceLedger.ps1
-├── attendance-ledger.cer
-├── attendance-ledger.cer.thumbprint.txt
-└── Attendance Ledger Setup.exe
+└── Attendance Ledger Files/
+    ├── Install Attendance Ledger.cmd
+    ├── Install-AttendanceLedger.ps1
+    ├── attendance-ledger.cer
+    ├── attendance-ledger.cer.thumbprint.txt
+    └── Attendance Ledger Setup.exe
 ```
 
-只分发这个目录，不得把 PFX 放进去。
+根目录只有一个安装入口和一个文件夹；文件夹内保留原有 5 个发布文件。生成脚本会检查
+归档内 6 个文件的精确路径和数量。ZIP 只包含公钥证书，不包含 PFX 或私钥。
 
 ## 五、在目标电脑安装
 
-1. 通过 U 盘或可信的公司内部共享目录复制整个安装目录。
+1. 通过 U 盘或可信的公司内部共享目录复制 ZIP，并完整解压到任意位置。
 2. 双击 `Install Attendance Ledger.cmd`。
 3. 接受一次 Windows 管理员权限提示。
 4. 脚本检查证书用途和指纹，将证书加入本机信任，并验证安装器确实由该证书签名。
