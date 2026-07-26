@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 if ($env:OS -ne "Windows_NT") {
-    throw "此脚本只能在 Windows 上运行。"
+    throw "This script can only run on Windows."
 }
 
 $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -23,11 +23,11 @@ $thumbprintPath = Join-Path $resolvedOutputDirectory "attendance-ledger.cer.thum
 New-Item -ItemType Directory -Path $resolvedOutputDirectory -Force | Out-Null
 foreach ($path in @($pfxPath, $cerPath, $thumbprintPath)) {
     if (Test-Path -LiteralPath $path) {
-        throw "目标文件已经存在，请先移动旧文件或指定新的输出目录：$path"
+        throw "A target file already exists. Move it or choose another output directory: $path"
     }
 }
 
-$pfxPassword = Read-Host "请设置 PFX 私钥密码（输入内容不会显示）" -AsSecureString
+$pfxPassword = Read-Host "Set the PFX password (input is hidden)" -AsSecureString
 $certificate = New-SelfSignedCertificate `
     -Type Custom `
     -Subject $Subject `
@@ -64,12 +64,12 @@ catch {
 }
 
 Write-Host ""
-Write-Host "内部代码签名证书已生成：" -ForegroundColor Green
-Write-Host "  私钥（仅用于构建，禁止分发）：$pfxPath"
-Write-Host "  公钥（随安装包分发）：      $cerPath"
-Write-Host "  证书指纹：                  $($certificate.Thumbprint)"
-Write-Host "  构建电脑信任：              已加入当前用户的 Root 和 TrustedPublisher"
+Write-Host "Internal code-signing certificate created:" -ForegroundColor Green
+Write-Host "  Private PFX (build only; never distribute): $pfxPath"
+Write-Host "  Public certificate (safe to distribute):   $cerPath"
+Write-Host "  Certificate thumbprint:                    $($certificate.Thumbprint)"
+Write-Host "  Build-machine trust: CurrentUser Root and TrustedPublisher"
 Write-Host ""
-Write-Host "请把 PFX 密码保存到密码管理器，并妥善备份 PFX。"
-Write-Host "上传 GitHub Secrets 前，可执行以下命令把 PFX 的 Base64 内容复制到剪贴板："
+Write-Host "Store the PFX password in a password manager and back up the PFX securely."
+Write-Host "Run this command to copy the PFX as Base64 for GitHub Actions Secrets:"
 Write-Host "[Convert]::ToBase64String([IO.File]::ReadAllBytes('$pfxPath')) | Set-Clipboard"

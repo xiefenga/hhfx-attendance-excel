@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 
 foreach ($path in @($InstallerPath, $CertificatePath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "没有找到文件：$path"
+        throw "File not found: $path"
     }
 }
 
@@ -21,13 +21,13 @@ $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
 )
 $signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
 if ($signature.Status -ne "Valid") {
-    throw "安装程序签名无效，状态为 $($signature.Status)。"
+    throw "The installer signature status is $($signature.Status)."
 }
 if (
     $null -eq $signature.SignerCertificate -or
     $signature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint
 ) {
-    throw "安装程序签名证书与提供的公钥证书不一致。"
+    throw "The installer signature does not match the supplied public certificate."
 }
 
 $resolvedOutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -52,5 +52,5 @@ Set-Content `
     -Value $certificate.Thumbprint `
     -Encoding Ascii
 
-Write-Host "内部安装包已整理完成：$resolvedOutputDirectory" -ForegroundColor Green
-Write-Host "请分发整个目录，不要放入 PFX 私钥。"
+Write-Host "Internal release bundle created: $resolvedOutputDirectory" -ForegroundColor Green
+Write-Host "Distribute the entire directory. Never include the private PFX."
