@@ -50,10 +50,10 @@ $pfx = "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger-sig
 验证主程序、sidecar 和 `Setup.exe` 的签名及证书指纹，并在 Windows artifact 中生成
 可以直接分发的 `attendance-ledger-internal-release` 目录。
 
-CI 读取 PFX 时会显式传入密码，不会等待交互输入。对于自签名证书，工作流只把公钥临时
-加入一次性 Windows runner 当前用户的受信任根和受信任发布者，以便 Windows 完整验证
-签名状态；构建结束后 runner 会被销毁。文件签名证书的指纹还必须与 PFX 完全一致。目标
-电脑上的安装脚本仍会在管理员确认后安装公钥。
+CI 读取 PFX 时会显式传入密码，不会等待交互输入。对于自签名证书，工作流通过
+`certutil -user -f` 非交互地把公钥临时加入一次性 Windows runner 当前用户的受信任根
+和受信任发布者，以便 Windows 完整验证签名状态；构建结束后 runner 会被销毁。文件签名
+证书的指纹还必须与 PFX 完全一致。目标电脑上的安装脚本仍会在管理员确认后安装公钥。
 
 ## 三、本地 Windows 构建
 

@@ -114,13 +114,15 @@ jobs:
 
           $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
           if ($isSelfSigned) {
-            Write-Host "Trusting the self-signed certificate for this ephemeral runner..."
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-            Import-Certificate `
-              -FilePath $publicCertificatePath `
-              -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
+            Write-Host "Trusting the self-signed certificate non-interactively for this ephemeral runner..."
+            & certutil.exe -user -f -addstore Root $publicCertificatePath
+            if ($LASTEXITCODE -ne 0) {
+              throw "certutil failed to add the certificate to CurrentUser Root."
+            }
+            & certutil.exe -user -f -addstore TrustedPublisher $publicCertificatePath
+            if ($LASTEXITCODE -ne 0) {
+              throw "certutil failed to add the certificate to CurrentUser TrustedPublisher."
+            }
           }
 
           "WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
