@@ -5,10 +5,17 @@ import path from "node:path";
 import readline from "node:readline";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
+import {
+  makeUserNotifier,
+  updateElectronApp,
+  UpdateSourceType
+} from "update-electron-app";
 
 import type { WorkerHello } from "../shared/ipc-contract";
 
 const REQUEST_TIMEOUT_MS = 120_000;
+const UPDATE_FEED_BASE_URL =
+  "https://gitee.com/xf_wwx/attendance-ledger-updates/raw/master/win32/x64";
 
 interface WorkerResponse {
   request_id?: string;
@@ -245,6 +252,35 @@ function registerIpc(): void {
   });
 }
 
+function startAutoUpdates(): void {
+  if (!app.isPackaged || process.platform !== "win32") {
+    return;
+  }
+
+  const start = (): void => {
+    updateElectronApp({
+      updateSource: {
+        type: UpdateSourceType.StaticStorage,
+        baseUrl: UPDATE_FEED_BASE_URL
+      },
+      updateInterval: "1 hour",
+      logger: console,
+      onNotifyUser: makeUserNotifier({
+        title: "发现新版本",
+        detail: "新版本已下载完成，重启应用即可完成更新。",
+        restartButtonText: "立即重启",
+        laterButtonText: "稍后"
+      })
+    });
+  };
+
+  if (process.argv.includes("--squirrel-firstrun")) {
+    setTimeout(start, 10_000);
+  } else {
+    start();
+  }
+}
+
 if (squirrelStartup) {
   app.quit();
 } else {
@@ -262,6 +298,7 @@ if (squirrelStartup) {
       registerIpc();
       await createWindow();
       ensureWorker().catch((error) => console.error("Python worker failed to start", error));
+      startAutoUpdates();
     });
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

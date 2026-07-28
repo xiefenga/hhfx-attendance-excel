@@ -58,6 +58,7 @@
     "macos-alias@0.2.12": true
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.1"
+    "electron-squirrel-startup": "^1.0.1",
+    "update-electron-app": "3.3.0"
   }
 }

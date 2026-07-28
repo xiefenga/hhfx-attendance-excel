@@ -129,7 +129,22 @@ git push origin v0.1.4
 - 使用同一签名证书且证书仍在两个本机信任存储中时，不重复导入证书，也不请求管理员权限；
 - 证书缺失或轮换时，才请求管理员权限并部署新证书。
 
-当前不使用 Electron `autoUpdater`，因此升级仍需要人工下载新 ZIP 并运行安装入口。
+Windows 安装版会从以下 Gitee 静态更新源自动检查新版本：
+
+```text
+https://gitee.com/xf_wwx/attendance-ledger-updates/raw/master/win32/x64
+```
+
+应用启动后检查一次，此后每小时检查一次。发现新版本后会在后台下载，并提示用户重启
+完成安装。GitHub Release 中的内部安装 ZIP 仍保留，可在自动更新不可用时手工升级。
+
+推送 `v*` 标签时，Release 工作流使用 GitHub Secret `GITEE_TOKEN` 在 Gitee 更新仓库中：
+
+1. 创建对应版本的 Release；
+2. 上传 Squirrel `.nupkg`、`Setup.exe` 和 `RELEASES`；
+3. 将包含 `.nupkg` 绝对下载地址的 `win32/x64/RELEASES` 写入 `master` 分支。
+
+令牌只保存在 GitHub Actions Secrets 中，不得写入仓库、安装包或客户端配置。
 
 ## 七、移除内部信任
 

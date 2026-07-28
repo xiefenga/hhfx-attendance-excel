@@ -94,6 +94,10 @@ Windows x64 的 Actions artifact 和 GitHub Release 只包含
 
 Windows 正式签名使用工作流中声明的 Windows 仓库 Secrets。
 
+已安装的 Windows 版本会通过 Gitee 更新仓库自动检查新版本，启动时检查一次，此后每小时
+检查一次；下载完成后由应用提示重启安装。发布 `v*` 标签前，需要在 GitHub Actions
+Secrets 中配置 `GITEE_TOKEN`。
+
 仅在少量受控 Windows 电脑内部使用时，可以免费使用自签名证书。证书生成、完整签名、
 安装目录整理和目标电脑一键安装流程见
 [Windows 内部免费签名与安装](docs/windows-internal-signing.md)。
