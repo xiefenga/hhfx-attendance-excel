@@ -36,7 +36,7 @@ $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version
 New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
 Get-ChildItem -LiteralPath $partsDirectory -File | Remove-Item -Force
 
-$chunkSize = 20000000
+$chunkSize = 2000000
 $inputStream = [IO.File]::OpenRead($setupFile.FullName)
 $partFiles = [Collections.Generic.List[IO.FileInfo]]::new()
 try {
@@ -53,7 +53,7 @@ try {
             }
             $offset += $read
         }
-        $partName = "Attendance-Ledger-$Version-Setup.exe.part{0:D3}" -f $partNumber
+        $partName = "part{0:D3}" -f $partNumber
         $partPath = Join-Path $partsDirectory $partName
         [IO.File]::WriteAllBytes($partPath, $buffer)
         $partFiles.Add((Get-Item -LiteralPath $partPath))
@@ -81,54 +81,122 @@ $manifest = @{
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 4
 
-$checkoutDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-gitee-v$Version"
-if (Test-Path -LiteralPath $checkoutDirectory) {
-    Remove-Item -LiteralPath $checkoutDirectory -Recurse -Force
-}
-$remoteUrl = "https://${Owner}:${escapedToken}@gitee.com/$Owner/$Repository.git"
-$env:GIT_TERMINAL_PROMPT = "0"
-& git clone --depth 1 --branch $Branch $remoteUrl $checkoutDirectory
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to clone the Gitee update repository."
+function Get-RepositoryContentEndpoint {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath
+    )
+
+    $escapedPath = ($RepositoryPath -split "/" | ForEach-Object {
+        [Uri]::EscapeDataString($_)
+    }) -join "/"
+    return "$apiBase/contents/$escapedPath"
 }
 
-$targetPartsDirectory = Join-Path $checkoutDirectory $partsPath
-if (Test-Path -LiteralPath $targetPartsDirectory) {
-    Remove-Item -LiteralPath $targetPartsDirectory -Recurse -Force
+function Publish-RepositoryFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IO.FileInfo]$File,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath,
+
+        [AllowNull()]
+        [string]$ExistingSha
+    )
+
+    $endpoint = Get-RepositoryContentEndpoint -RepositoryPath $RepositoryPath
+    $body = @{
+        access_token = $accessToken
+        content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($File.FullName))
+        message = "chore(release): 发布 v$Version $RepositoryPath"
+        branch = $Branch
+    }
+    $method = "Post"
+    if (-not [string]::IsNullOrWhiteSpace($ExistingSha)) {
+        $body.sha = $ExistingSha
+        $method = "Put"
+    }
+
+    for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+        try {
+            Invoke-RestMethod `
+                -Uri $endpoint `
+                -Method $method `
+                -TimeoutSec 180 `
+                -ContentType "application/x-www-form-urlencoded" `
+                -Body $body | Out-Null
+            return
+        } catch {
+            if ($attempt -eq 3) {
+                throw
+            }
+            Write-Warning (
+                "Publishing $RepositoryPath failed on attempt $attempt; retrying."
+            )
+            Start-Sleep -Seconds 3
+        }
+    }
 }
-New-Item -ItemType Directory -Path $targetPartsDirectory -Force | Out-Null
+
+$partsEndpoint = Get-RepositoryContentEndpoint -RepositoryPath $partsPath
+$partsStatusCode = 0
+$existingParts = Invoke-RestMethod `
+    -Uri "${partsEndpoint}?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable partsStatusCode
+if ($partsStatusCode -eq 404) {
+    $existingParts = @()
+} elseif ($partsStatusCode -lt 200 -or $partsStatusCode -ge 300) {
+    throw "Gitee update parts lookup failed with HTTP $partsStatusCode."
+}
+
+$existingPartShas = @{}
+foreach ($existingPart in @($existingParts)) {
+    if (
+        $null -ne $existingPart -and
+        $null -ne $existingPart.PSObject.Properties["name"] -and
+        $null -ne $existingPart.PSObject.Properties["sha"]
+    ) {
+        $existingPartShas[[string]$existingPart.name] = [string]$existingPart.sha
+    }
+}
 foreach ($partFile in $partFiles) {
-    Copy-Item -LiteralPath $partFile.FullName -Destination $targetPartsDirectory
+    $repositoryPartPath = "$partsPath/$($partFile.Name)"
+    Write-Host "Publishing $repositoryPartPath ($($partFile.Length) bytes)..."
+    Publish-RepositoryFile `
+        -File $partFile `
+        -RepositoryPath $repositoryPartPath `
+        -ExistingSha $existingPartShas[[string]$partFile.Name]
 }
 
 $manifestPath = "win32/x64/update.json"
-$manifestFile = Join-Path $checkoutDirectory $manifestPath
+$manifestFile = Join-Path $partsDirectory "update.json"
 [IO.File]::WriteAllText(
     $manifestFile,
     "$manifestJson`n",
     [Text.UTF8Encoding]::new($false)
 )
 
-& git -C $checkoutDirectory config user.name "Attendance Ledger Release"
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to configure the Gitee release Git user."
+$manifestEndpoint = Get-RepositoryContentEndpoint -RepositoryPath $manifestPath
+$manifestStatusCode = 0
+$existingManifest = Invoke-RestMethod `
+    -Uri "${manifestEndpoint}?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable manifestStatusCode
+if ($manifestStatusCode -eq 404) {
+    $manifestSha = $null
+} elseif ($manifestStatusCode -ge 200 -and $manifestStatusCode -lt 300) {
+    $manifestSha = [string]$existingManifest.sha
+} else {
+    throw "Gitee update manifest lookup failed with HTTP $manifestStatusCode."
 }
-& git -C $checkoutDirectory config user.email "release@attendance-ledger.local"
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to configure the Gitee release Git email."
-}
-& git -C $checkoutDirectory add --all
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to stage the Gitee update files."
-}
-& git -C $checkoutDirectory commit -m "chore(release): 发布 v$Version Windows 更新"
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to commit the Gitee update files."
-}
-& git -C $checkoutDirectory push origin $Branch
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to push the Gitee update files."
-}
+Publish-RepositoryFile `
+    -File (Get-Item -LiteralPath $manifestFile) `
+    -RepositoryPath $manifestPath `
+    -ExistingSha $manifestSha
 
 $escapedTag = [Uri]::EscapeDataString("v$Version")
 $releaseStatusCode = 0
