@@ -18,3 +18,4 @@ outputs/
 *.cer.thumbprint.txt
 attendance-ledger-internal-release/
 Attendance-Ledger-Windows-x64.zip
+/示例数据/*.xlsx

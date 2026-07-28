@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>考勤汇总工具</title>
+  <style>
+    :root {
+      --bg: #fdf3ec;
+      --surface: #ffffff;
+      --surface-warm: #fff4ea;
+      --fg: #1a1a1f;
+      --fg-2: #54545a;
+      --muted: #8c8c93;
+      --meta: var(--muted);
+      --border: #ece5db;
+      --border-soft: #f6f0e8;
+      --accent: #ff5f5f;
+      --accent-on: #ffffff;
+      --accent-hover: color-mix(in oklab, var(--accent), black 8%);
+      --accent-active: color-mix(in oklab, var(--accent), black 14%);
+      --success: #48bb78;
+      --warn: #f6ad55;
+      --danger: #f56565;
+      --font-display: "Argent CF", "Source Serif Pro", Georgia, serif;
+      --font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: "Berkeley Mono", ui-monospace, Menlo, Consolas, monospace;
+      --text-xs: 12px;
+      --text-sm: 13px;
+      --text-base: 15px;
+      --text-lg: 18px;
+      --text-xl: 22px;
+      --text-2xl: 32px;
+      --text-3xl: 40px;
+      --text-4xl: 72px;
+      --leading-body: 1.55;
+      --leading-tight: 1.05;
+      --tracking-display: -0.03em;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-12: 48px;
+      --section-y-desktop: 96px;
+      --section-y-tablet: 64px;
+      --section-y-phone: 48px;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-pill: 9999px;
+      --elev-flat: none;
+      --elev-ring: 0 0 0 1px var(--border);
+      --elev-raised: 0 8px 32px rgba(0, 0, 0, 0.08);
+      --focus-ring: 0 0 0 4px color-mix(in oklab, var(--accent), transparent 80%);
+      --motion-fast: 200ms;
+      --motion-base: 320ms;
+      --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
+      --container-max: 1200px;
+      --container-gutter-desktop: 32px;
+      --container-gutter-tablet: 24px;
+      --container-gutter-phone: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      color: var(--fg);
+      background:
+        radial-gradient(circle at 18% 6%, color-mix(in oklab, var(--accent), transparent 82%), transparent 32%),
+        linear-gradient(135deg, var(--bg), var(--surface-warm));
+      font-family: var(--font-body);
+      font-size: var(--text-base);
+      line-height: var(--leading-body);
+    }
+
+    button, input { font: inherit; }
+    button { letter-spacing: .02em; }
+    button:disabled { pointer-events: none; }
+
+    button:focus-visible,
+    input:focus-visible {
+      outline: 2px solid transparent;
+      outline-offset: 2px;
+      box-shadow: var(--focus-ring);
+    }
+
+    [hidden] { display: none !important; }
+    svg { display: block; }
+
+    .window {
+      width: min(100%, 1000px);
+      height: min(760px, 100vh);
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklab, var(--surface), transparent 35%);
+      border-radius: var(--radius-md);
+      background: color-mix(in oklab, var(--surface), transparent 10%);
+      box-shadow: var(--elev-raised);
+      backdrop-filter: blur(24px) saturate(145%);
+      -webkit-backdrop-filter: blur(24px) saturate(145%);
+    }
+
+    .titlebar {
+      height: 44px;
+      padding-left: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in oklab, var(--surface), transparent 28%);
+      backdrop-filter: blur(20px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(140%);
+      user-select: none;
+      -webkit-app-region: drag;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 550;
+    }
+
+    .brand-mark {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      color: var(--accent-on);
+      background: var(--accent);
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px color-mix(in oklab, var(--accent), transparent 74%);
+    }
+
+    .window-controls {
+      height: 100%;
+      display: flex;
+      align-items: stretch;
+      -webkit-app-region: no-drag;
+    }
+
+    .window-control {
+      position: relative;
+      width: 46px;
+      height: 100%;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      color: var(--muted);
+      background: transparent;
+      cursor: default;
+      transition: color .1s ease, background .1s ease;
+    }
+
+    .window-control:hover {
+      color: var(--fg);
+      background: color-mix(in oklab, var(--surface-warm), transparent 16%);
+    }
+
+    .window-control:active {
+      transform: none;
+      background: var(--border-soft);
+    }
+
+    .window-control-close:hover {
+      color: var(--accent-on);
+      background: var(--danger);
+    }
+
+    .window-control::before,
+    .window-control::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .window-control-minimize::before {
+      width: 10px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    .window-control-maximize::before {
+      width: 9px;
+      height: 9px;
+      border: 1px solid currentColor;
+    }
+
+    .window-control-close::before,
+    .window-control-close::after {
+      width: 12px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    .window-control-close::before {
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+
+    .window-control-close::after {
+      transform: translate(-50%, -50%) rotate(-45deg);
+    }
+
+    main {
+      width: min(100%, 920px);
+      height: calc(100% - 44px);
+      margin: 0 auto;
+      padding: var(--space-12) var(--space-8) var(--space-8);
+    }
+
+    #setup-view {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .intro {
+      margin-bottom: var(--space-8);
+    }
+
+    .intro h1 { margin-bottom: 0; }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      margin-bottom: var(--space-2);
+      font-family: var(--font-body);
+      font-size: clamp(28px, 3.4vw, var(--text-2xl));
+      line-height: 1.2;
+      letter-spacing: -.02em;
+      font-weight: 700;
+    }
+
+    .file-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklab, var(--surface), transparent 32%);
+      border-radius: var(--radius-lg);
+      background: color-mix(in oklab, var(--surface), transparent 16%);
+      box-shadow: var(--elev-ring);
+      backdrop-filter: blur(24px) saturate(140%);
+      -webkit-backdrop-filter: blur(24px) saturate(140%);
+    }
+
+    .file-card {
+      min-width: 0;
+      padding: var(--space-6);
+      display: grid;
+      grid-template-columns: minmax(190px, .78fr) minmax(240px, 1.4fr) 172px;
+      align-items: center;
+      gap: 20px;
+      border: 0;
+      border-bottom: 1px solid var(--border-soft);
+      border-radius: 0;
+      background: transparent;
+      transition: background var(--motion-fast) var(--ease-standard);
+    }
+
+    .file-card:last-child { border-bottom: 0; }
+
+    .file-card.is-ready {
+      background: color-mix(in oklab, var(--success), transparent 95%);
+    }
+
+    .file-card.is-error {
+      background: color-mix(in oklab, var(--danger), transparent 94%);
+    }
+
+    .file-card-head {
+      min-width: 0;
+    }
+
+    .file-card h2 {
+      margin-bottom: 4px;
+      font-size: var(--text-lg);
+      line-height: 1.3;
+      font-weight: 590;
+    }
+
+    .file-state {
+      min-width: 0;
+      min-height: 48px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .empty-state {
+      color: var(--muted);
+      font-size: var(--text-sm);
+    }
+
+    .selected-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-symbol,
+    .warning-icon,
+    .error-symbol {
+      flex: 0 0 auto;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-family: var(--font-body);
+      font-weight: 600;
+      line-height: 1;
+    }
+
+    .status-symbol {
+      width: 18px;
+      height: 18px;
+      color: var(--success);
+      font-size: 11px;
+    }
+
+    .warning-icon,
+    .error-symbol {
+      width: 20px;
+      height: 20px;
+      font-size: 12px;
+    }
+
+    .warning-icon { color: var(--warn); }
+    .error-symbol { color: var(--danger); }
+
+    .file-name {
+      overflow: hidden;
+      color: var(--fg);
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-meta {
+      grid-column: 2;
+      color: var(--muted);
+      font-size: var(--text-xs);
+      letter-spacing: .01em;
+    }
+
+    .choose-button {
+      width: 100%;
+      min-height: 44px;
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid color-mix(in oklab, var(--surface), transparent 22%);
+      border-radius: var(--radius-md);
+      color: var(--fg);
+      background: color-mix(in oklab, var(--surface), transparent 26%);
+      box-shadow: var(--elev-ring);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      cursor: pointer;
+      font-weight: 550;
+      transition: background var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-standard);
+    }
+
+    .choose-button:hover { background: var(--surface-warm); }
+    .choose-button:active { transform: translateY(1px); }
+    .choose-button:disabled {
+      color: var(--muted);
+      border-color: var(--border);
+      background: var(--border-soft);
+      cursor: wait;
+      opacity: .72;
+    }
+
+    .message {
+      margin-top: var(--space-4);
+      padding: var(--space-3) var(--space-4);
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      border: 1px solid;
+      border-radius: var(--radius-md);
+      font-size: var(--text-sm);
+    }
+
+    .message strong {
+      display: block;
+      margin-bottom: 2px;
+      font-weight: 590;
+    }
+
+    .message p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .message.error {
+      border-color: color-mix(in oklab, var(--danger), transparent 62%);
+      background: color-mix(in oklab, var(--danger), transparent 92%);
+      color: var(--danger);
+    }
+
+    .message-body { color: var(--fg); }
+    .message-body p { max-width: 65ch; }
+
+    .action-zone {
+      flex: 1;
+      min-height: 120px;
+      margin-top: 0;
+      padding-top: var(--space-8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .primary-button,
+    .secondary-button {
+      min-height: 46px;
+      padding: 0 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      font-weight: 590;
+      transition:
+        background var(--motion-fast) var(--ease-standard),
+        box-shadow var(--motion-fast) var(--ease-standard),
+        transform var(--motion-fast) var(--ease-standard),
+        opacity var(--motion-fast) var(--ease-standard);
+    }
+
+    .primary-button {
+      border: 1px solid color-mix(in oklab, var(--accent), var(--accent-active) 28%);
+      color: var(--accent-on);
+      background: linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--accent), var(--surface) 12%),
+        var(--accent)
+      );
+      box-shadow:
+        0 4px 16px color-mix(in oklab, var(--accent), transparent 68%),
+        inset 0 1px 0 color-mix(in oklab, var(--surface), transparent 72%);
+    }
+
+    .primary-button:hover:not(:disabled) {
+      background: var(--accent-hover);
+      box-shadow: 0 8px 24px color-mix(in oklab, var(--accent), transparent 62%);
+    }
+    .primary-button:active:not(:disabled) { transform: translateY(1px); }
+
+    .primary-button:disabled {
+      border-color: var(--border);
+      color: color-mix(in oklab, var(--muted), var(--surface) 18%);
+      background: var(--border-soft);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    .secondary-button {
+      border: 1px solid color-mix(in oklab, var(--surface), transparent 25%);
+      color: var(--fg);
+      background: color-mix(in oklab, var(--surface), transparent 22%);
+      box-shadow: var(--elev-ring);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .secondary-button:hover { background: var(--surface-warm); }
+
+    .spinner {
+      width: 17px;
+      height: 17px;
+      border: 2px solid color-mix(in oklab, var(--accent-on), transparent 64%);
+      border-top-color: var(--accent-on);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #result-dialog[open] {
+      animation: view-enter var(--motion-base) var(--ease-standard);
+    }
+
+    @keyframes view-enter {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-panel {
+      min-height: 260px;
+      padding: var(--space-12);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-5);
+      text-align: center;
+    }
+
+    .success-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: var(--accent-on);
+      border-radius: 50%;
+      background: var(--success);
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 1;
+    }
+
+    .result-panel h2 {
+      margin: 0;
+      font-family: var(--font-body);
+      font-size: var(--text-xl);
+      letter-spacing: -.01em;
+      font-weight: 600;
+    }
+
+    .result-actions {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      padding-top: var(--space-1);
+    }
+
+    dialog {
+      width: min(calc(100% - 32px), 560px);
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklab, var(--surface), transparent 28%);
+      border-radius: var(--radius-lg);
+      color: var(--fg);
+      background: color-mix(in oklab, var(--surface), transparent 8%);
+      box-shadow: var(--elev-raised);
+      backdrop-filter: blur(24px) saturate(145%);
+      -webkit-backdrop-filter: blur(24px) saturate(145%);
+    }
+
+    #result-dialog {
+      width: min(calc(100% - 32px), 680px);
+    }
+
+    .result-dialog-close {
+      position: absolute;
+      top: var(--space-3);
+      right: var(--space-3);
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border: 0;
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      transition:
+        color var(--motion-fast) var(--ease-standard),
+        background var(--motion-fast) var(--ease-standard);
+    }
+
+    .result-dialog-close:hover {
+      color: var(--fg);
+      background: var(--surface-warm);
+    }
+
+    .result-dialog-close::before,
+    .result-dialog-close::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 14px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    .result-dialog-close::before {
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+
+    .result-dialog-close::after {
+      transform: translate(-50%, -50%) rotate(-45deg);
+    }
+
+    dialog::backdrop {
+      background: color-mix(in oklab, var(--fg), transparent 66%);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+
+    .dialog-body { padding: 24px; }
+
+    .dialog-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .dialog-title h2 {
+      margin: 0;
+      font-family: var(--font-body);
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .dialog-body > p { color: var(--muted); }
+
+    .difference-list {
+      margin: 18px 0 0;
+      padding: 0;
+      list-style: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: color-mix(in oklab, var(--surface), transparent 8%);
+    }
+
+    .difference-list li {
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: var(--text-sm);
+    }
+
+    .difference-list li:last-child { border-bottom: 0; }
+    .difference-list span:first-child {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .difference-list span:last-child { color: var(--muted); }
+
+    .dialog-actions {
+      padding: 16px 24px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      border-top: 1px solid var(--border-soft);
+      background: color-mix(in oklab, var(--surface-warm), transparent 28%);
+    }
+
+    @media (max-width: 760px) {
+      .window {
+        border: 0;
+        box-shadow: none;
+      }
+
+      main { padding: 36px 22px 24px; }
+
+      .intro {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .file-card {
+        grid-template-columns: minmax(0, 1fr) 168px;
+        gap: 14px 18px;
+      }
+
+      .file-card-head { grid-column: 1 / -1; }
+      .primary-button { width: 100%; }
+
+    }
+
+    @media (max-width: 520px) {
+      .titlebar {
+        height: 44px;
+      }
+
+      .window-control { width: 42px; }
+
+      main {
+        padding-top: 28px;
+        padding-inline: 16px;
+        padding-bottom: 16px;
+      }
+      .file-card {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 20px 0;
+      }
+      .file-card-head { grid-column: auto; }
+      .result-panel {
+        min-height: 220px;
+        padding: var(--space-8);
+      }
+
+      .dialog-actions {
+        flex-direction: column-reverse;
+      }
+
+      .dialog-actions button { width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+
+      .view-enter { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window" data-od-id="application-window">
+    <header class="titlebar" data-od-id="titlebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">勤</span>
+        <span>考勤汇总工具</span>
+      </div>
+      <div class="window-controls" aria-label="窗口控制">
+        <button class="window-control window-control-minimize" type="button" aria-label="最小化" title="最小化" data-window-action="minimize" data-od-id="window-minimize"></button>
+        <button class="window-control window-control-maximize" type="button" aria-label="最大化" title="最大化" data-window-action="maximize" data-od-id="window-maximize"></button>
+        <button class="window-control window-control-close" type="button" aria-label="关闭" title="关闭" data-window-action="close" data-od-id="window-close"></button>
+      </div>
+    </header>
+
+    <main>
+      <section id="setup-view" tabindex="-1" data-od-id="file-selection-workflow">
+        <div class="intro">
+          <div>
+            <h1 data-od-id="page-heading">生成考勤汇总表</h1>
+          </div>
+        </div>
+
+        <div class="file-grid">
+          <article class="file-card" id="punch-card" data-od-id="file-card-punch">
+            <div class="file-card-head">
+              <div>
+                <h2>打卡时间表</h2>
+              </div>
+            </div>
+
+            <div class="file-state" id="punch-state" aria-live="polite">
+              <span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>
+            </div>
+
+            <input id="punch-input" type="file" accept=".xlsx,.xls" hidden />
+
+            <button class="choose-button" id="punch-button" type="button" data-od-id="select-punch-file">
+              选择打卡时间表
+            </button>
+          </article>
+
+          <article class="file-card" id="monthly-card" data-od-id="file-card-monthly">
+            <div class="file-card-head">
+              <div>
+                <h2>月度汇总表</h2>
+              </div>
+            </div>
+
+            <div class="file-state" id="monthly-state" aria-live="polite">
+              <span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>
+            </div>
+
+            <input id="monthly-input" type="file" accept=".xlsx,.xls" hidden />
+
+            <button class="choose-button" id="monthly-button" type="button" data-od-id="select-monthly-file">
+              选择月度汇总表
+            </button>
+          </article>
+        </div>
+
+        <div id="inline-message" aria-live="assertive" aria-atomic="true"></div>
+
+        <div class="action-zone" data-od-id="generation-actions">
+          <button class="primary-button" id="generate-button" type="button" disabled data-od-id="generate-summary">
+            <span>生成考勤汇总表</span>
+          </button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <dialog id="result-dialog" aria-labelledby="result-title" data-od-id="success-result-dialog">
+    <button class="result-dialog-close" id="result-close-button" type="button" aria-label="关闭生成结果" title="关闭"></button>
+
+    <div class="result-panel">
+      <span class="success-icon" aria-hidden="true">✓</span>
+      <h2 id="result-title">考勤汇总表已生成</h2>
+
+      <div class="result-actions">
+        <button class="primary-button" id="reveal-button" type="button" data-od-id="show-in-folder">
+          在文件夹中显示
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="difference-dialog" aria-labelledby="difference-title" aria-describedby="difference-description">
+    <div class="dialog-body">
+      <div class="dialog-title">
+        <span class="warning-icon" aria-hidden="true">!</span>
+        <h2 id="difference-title">两张表的人员名单不一致</h2>
+      </div>
+
+      <p id="difference-description">发现人员差异。继续生成时，仅汇总两张表中均存在的人员。</p>
+
+      <ul class="difference-list" data-od-id="person-differences">
+        <li><span>姓名由文件解析</span><span>仅在打卡时间表</span></li>
+        <li><span>姓名由文件解析</span><span>仅在月度汇总表</span></li>
+      </ul>
+    </div>
+
+    <div class="dialog-actions">
+      <button class="secondary-button" id="back-button" type="button">返回更换文件</button>
+      <button class="primary-button" id="continue-button" type="button">仍然生成</button>
+    </div>
+  </dialog>
+
+  <script>
+    const state = {
+      punch: null,
+      monthly: null,
+      generating: false
+    };
+
+    const $ = id => document.getElementById(id);
+
+    const fileInputs = {
+      punch: $("punch-input"),
+      monthly: $("monthly-input")
+    };
+
+    document.querySelectorAll("[data-window-action]").forEach(control => {
+      control.addEventListener("click", () => {
+        window.dispatchEvent(new CustomEvent("attendance:window-action", {
+          detail: { action: control.dataset.windowAction }
+        }));
+      });
+    });
+
+    function checkIcon() {
+      return '<span class="status-symbol" aria-hidden="true">✓</span>';
+    }
+
+    function formatSize(bytes) {
+      if (!bytes) return "0 KB";
+      return bytes > 1048576
+        ? `${(bytes / 1048576).toFixed(1)} MB`
+        : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    }
+
+    function escapeHTML(value) {
+      return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      })[character]);
+    }
+
+    function isExcelFile(file) {
+      return /\.(xlsx|xls)$/i.test(file.name);
+    }
+
+    function renderFile(kind) {
+      const file = state[kind];
+      const label = kind === "punch" ? "打卡时间表" : "月度汇总表";
+      const stateElement = $(`${kind}-state`);
+      const card = $(`${kind}-card`);
+      const button = $(`${kind}-button`);
+
+      if (!file) {
+        card.classList.remove("is-ready");
+        stateElement.innerHTML = '<span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>';
+        button.lastChild.textContent = `选择${label}`;
+        return;
+      }
+
+      card.classList.remove("is-error");
+      card.classList.add("is-ready");
+
+      const safeName = escapeHTML(file.name);
+
+      stateElement.innerHTML = `
+        <div class="selected-row">
+          ${checkIcon()}
+          <span class="file-name" title="${safeName}">${safeName}</span>
+          <span class="file-meta">已选择，${formatSize(file.size)}，文件格式有效</span>
+        </div>
+      `;
+
+      button.lastChild.textContent = "更换文件";
+    }
+
+    function updateReadiness() {
+      const ready = Boolean(state.punch && state.monthly);
+
+      $("generate-button").disabled = !ready || state.generating;
+
+      if (ready) {
+        $("inline-message").innerHTML = "";
+      }
+    }
+
+    function onFile(kind, file) {
+      if (!file) return;
+
+      if (!isExcelFile(file)) {
+        state[kind] = null;
+        fileInputs[kind].value = "";
+        renderFile(kind);
+        $(`${kind}-card`).classList.add("is-error");
+        $("inline-message").innerHTML = `
+          <div class="message error" role="alert" data-od-id="file-format-error">
+            <span class="error-symbol" aria-hidden="true">!</span>
+            <div class="message-body">
+              <strong>文件格式不受支持</strong>
+              <p>请选择钉钉导出的 .xlsx 或 .xls 文件。</p>
+            </div>
+          </div>
+        `;
+        updateReadiness();
+        return;
+      }
+
+      state[kind] = file;
+      renderFile(kind);
+      updateReadiness();
+    }
+
+    $("punch-button").addEventListener("click", () => fileInputs.punch.click());
+    $("monthly-button").addEventListener("click", () => fileInputs.monthly.click());
+
+    fileInputs.punch.addEventListener("change", event => {
+      onFile("punch", event.target.files[0]);
+    });
+
+    fileInputs.monthly.addEventListener("change", event => {
+      onFile("monthly", event.target.files[0]);
+    });
+
+    function fileWithKeyword(keyword) {
+      return Object.entries(state).find(
+        ([kind, file]) => (kind === "punch" || kind === "monthly") && file && file.name.includes(keyword)
+      );
+    }
+
+    function showBlockingError(fileEntry) {
+      const label = fileEntry?.[0] === "punch" ? "打卡时间表" : "月度汇总表";
+      $("inline-message").innerHTML = `
+        <div class="message error" role="alert" data-od-id="blocking-error">
+          <span class="error-symbol" aria-hidden="true">!</span>
+          <div class="message-body">
+            <strong>无法读取${label}</strong>
+            <p>文件内容不完整或已损坏。请从钉钉重新导出后更换文件。</p>
+          </div>
+        </div>
+      `;
+    }
+
+    function beginGeneration() {
+      if (state.generating) return;
+
+      state.generating = true;
+
+      const button = $("generate-button");
+
+      $("setup-view").setAttribute("aria-busy", "true");
+      button.disabled = true;
+      button.innerHTML = `
+        <span class="spinner" aria-hidden="true"></span>
+        <span>正在解析并计算…</span>
+      `;
+
+      $("punch-button").disabled = true;
+      $("monthly-button").disabled = true;
+
+      window.setTimeout(showSuccess, 1500);
+    }
+
+    function resetGenerateButton() {
+      state.generating = false;
+      $("setup-view").removeAttribute("aria-busy");
+      $("punch-button").disabled = false;
+      $("monthly-button").disabled = false;
+
+      $("generate-button").innerHTML = `
+        <span>生成考勤汇总表</span>
+      `;
+
+      updateReadiness();
+    }
+
+    function showSuccess() {
+      resetGenerateButton();
+
+      if (!$("result-dialog").open) {
+        $("result-dialog").showModal();
+      }
+    }
+
+    $("generate-button").addEventListener("click", () => {
+      const blockingFile = fileWithKeyword("损坏") || fileWithKeyword("错误");
+
+      if (blockingFile) {
+        showBlockingError(blockingFile);
+        return;
+      }
+
+      if (fileWithKeyword("差异")) {
+        $("difference-dialog").showModal();
+        return;
+      }
+
+      beginGeneration();
+    });
+
+    $("back-button").addEventListener("click", () => {
+      $("difference-dialog").close();
+    });
+
+    $("continue-button").addEventListener("click", () => {
+      $("difference-dialog").close();
+      beginGeneration();
+    });
+
+    $("result-close-button").addEventListener("click", () => {
+      $("result-dialog").close();
+      $("generate-button").focus();
+    });
+
+    $("reveal-button").addEventListener("click", event => {
+      const button = event.currentTarget;
+      const previousContent = button.innerHTML;
+
+      button.innerHTML = `${checkIcon()}<span>已在文件夹中定位</span>`;
+
+      window.setTimeout(() => {
+        button.innerHTML = previousContent;
+      }, 1800);
+    });
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>考勤汇总工具</title>
+  <style>
+    :root {
+      --bg:      oklch(98% 0.005 250);
+      --surface: oklch(100% 0 0);
+      --fg:      oklch(22% 0.02 240);
+      --muted:   oklch(50% 0.018 240);
+      --border:  oklch(90% 0.008 240);
+      --accent:  oklch(58% 0.16 145);
+
+      --font-display: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+      --font-body:    -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+      --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+
+      --primary: oklch(48% 0.10 245);
+      --primary-hover: oklch(42% 0.11 245);
+      --primary-soft: oklch(95% 0.025 245);
+      --success: oklch(52% 0.14 145);
+      --success-soft: oklch(96% 0.025 145);
+      --warning: oklch(65% 0.14 72);
+      --warning-soft: oklch(97% 0.035 80);
+      --danger: oklch(54% 0.18 25);
+      --danger-soft: oklch(96% 0.025 25);
+      --shadow: 0 1px 2px oklch(20% 0.02 240 / .05), 0 12px 30px oklch(32% 0.03 240 / .06);
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--fg);
+      background: var(--bg);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    button, input { font: inherit; }
+    button { letter-spacing: .02em; }
+    button:focus-visible, input:focus-visible {
+      outline: 3px solid oklch(48% 0.10 245 / .22);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+
+    .window {
+      width: min(100%, 1000px);
+      min-height: min(760px, 100vh);
+      margin: 0 auto;
+      background: var(--surface);
+      border-inline: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .titlebar {
+      height: 52px;
+      padding: 0 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface) 94%, var(--primary-soft));
+      user-select: none;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 590;
+    }
+    .brand-mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      color: var(--surface);
+      background: var(--primary);
+      border-radius: 6px;
+    }
+    .platform {
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .02em;
+    }
+
+    main {
+      width: min(100%, 920px);
+      margin: 0 auto;
+      padding: 42px 34px 36px;
+    }
+    .intro {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 32px;
+      margin-bottom: 28px;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      margin-bottom: 8px;
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4vw, 36px);
+      line-height: 1.15;
+      letter-spacing: -.02em;
+      font-weight: 600;
+    }
+    .intro p {
+      margin-bottom: 0;
+      max-width: 60ch;
+      color: var(--muted);
+    }
+    .local-badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .02em;
+      background: var(--bg);
+    }
+
+    .file-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .file-card {
+      min-width: 0;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    .file-card.is-ready {
+      border-color: color-mix(in oklch, var(--success) 38%, var(--border));
+      background: color-mix(in oklch, var(--surface) 96%, var(--success-soft));
+    }
+    .file-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 64px;
+    }
+    .file-card h2 {
+      margin-bottom: 4px;
+      font-size: 18px;
+      line-height: 1.3;
+      font-weight: 590;
+    }
+    .file-card p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .file-icon {
+      flex: 0 0 auto;
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      color: var(--primary);
+      border-radius: 8px;
+      background: var(--primary-soft);
+    }
+    .file-state {
+      margin-top: 18px;
+      min-height: 80px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .empty-state {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .selected-row {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+    }
+    .selected-row > svg { color: var(--success); }
+    .file-name {
+      overflow: hidden;
+      color: var(--fg);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-meta {
+      grid-column: 2 / 4;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .01em;
+    }
+    .link-button {
+      padding: 3px 0;
+      border: 0;
+      color: var(--primary);
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 550;
+    }
+    .choose-button {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid color-mix(in oklch, var(--primary) 38%, var(--border));
+      border-radius: 8px;
+      color: var(--primary);
+      background: var(--surface);
+      cursor: pointer;
+      font-weight: 550;
+      transition: background .15s ease, transform .15s ease;
+    }
+    .choose-button:hover { background: var(--primary-soft); }
+    .choose-button:active { transform: translateY(1px); }
+
+    .message {
+      margin-top: 18px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      border: 1px solid;
+      border-radius: 9px;
+      font-size: 13px;
+    }
+    .message strong { display: block; margin-bottom: 2px; font-weight: 590; }
+    .message p { margin: 0; color: var(--muted); }
+    .message.error { border-color: color-mix(in oklch, var(--danger) 35%, var(--border)); background: var(--danger-soft); color: var(--danger); }
+    .message.warning { border-color: color-mix(in oklch, var(--warning) 45%, var(--border)); background: var(--warning-soft); color: oklch(47% .12 65); }
+    .message-body { color: var(--fg); }
+
+    .action-zone {
+      margin-top: 24px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 20px;
+    }
+    .readiness {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .readiness-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      box-shadow: 0 0 0 4px var(--bg);
+    }
+    .readiness.ready { color: var(--fg); }
+    .readiness.ready .readiness-dot { background: var(--success); box-shadow: 0 0 0 4px var(--success-soft); }
+    .primary-button, .secondary-button, .ghost-button {
+      min-height: 46px;
+      padding: 0 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 590;
+      transition: background .15s ease, transform .15s ease, opacity .15s ease;
+    }
+    .primary-button {
+      border: 1px solid var(--primary-hover);
+      color: var(--surface);
+      background: var(--primary);
+      box-shadow: 0 4px 12px oklch(40% .08 245 / .20), inset 0 1px 0 oklch(100% 0 0 / .18);
+    }
+    .primary-button:hover:not(:disabled) { background: var(--primary-hover); }
+    .primary-button:active:not(:disabled) { transform: translateY(1px); }
+    .primary-button:disabled {
+      border-color: var(--border);
+      color: color-mix(in oklch, var(--muted) 80%, var(--surface));
+      background: color-mix(in oklch, var(--bg) 86%, var(--border));
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    .secondary-button {
+      border: 1px solid var(--border);
+      color: var(--fg);
+      background: var(--surface);
+    }
+    .secondary-button:hover { background: var(--bg); }
+    .ghost-button {
+      border: 1px solid transparent;
+      color: var(--primary);
+      background: transparent;
+    }
+    .ghost-button:hover { background: var(--primary-soft); }
+    .spinner {
+      width: 17px;
+      height: 17px;
+      border: 2px solid oklch(100% 0 0 / .35);
+      border-top-color: var(--surface);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .result-panel {
+      padding: 26px;
+      border: 1px solid color-mix(in oklch, var(--success) 32%, var(--border));
+      border-radius: var(--radius);
+      background: color-mix(in oklch, var(--surface) 96%, var(--success-soft));
+    }
+    .result-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+    .success-icon {
+      flex: 0 0 auto;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: var(--surface);
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .result-head h2 {
+      margin-bottom: 3px;
+      font-size: 22px;
+      letter-spacing: -.01em;
+      font-weight: 600;
+    }
+    .result-head p { margin: 0; color: var(--muted); }
+    .output-box {
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .output-name {
+      overflow: hidden;
+      margin-bottom: 5px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 550;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .output-path {
+      overflow: hidden;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .stat-grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .stat {
+      min-width: 0;
+      padding: 14px 16px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat:nth-child(3n) { border-right: 0; }
+    .stat:nth-last-child(-n+3) { border-bottom: 0; }
+    .stat-label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .02em;
+    }
+    .stat-value {
+      overflow-wrap: anywhere;
+      font-family: var(--font-mono);
+      font-size: 17px;
+      font-variant-numeric: tabular-nums;
+      font-weight: 590;
+    }
+    .result-actions {
+      margin-top: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    dialog {
+      width: min(calc(100% - 32px), 560px);
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--fg);
+      background: var(--surface);
+      box-shadow: 0 24px 70px oklch(20% .03 240 / .22);
+    }
+    dialog::backdrop { background: oklch(20% .02 240 / .34); }
+    .dialog-body { padding: 24px; }
+    .dialog-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .dialog-title h2 { margin: 0; font-size: 20px; font-weight: 600; }
+    .dialog-body > p { color: var(--muted); }
+    .difference-list {
+      margin: 18px 0 0;
+      padding: 0;
+      list-style: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .difference-list li {
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .difference-list li:last-child { border-bottom: 0; }
+    .difference-list span:last-child { color: var(--muted); }
+    .dialog-actions {
+      padding: 16px 24px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .footer-note {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      letter-spacing: .01em;
+    }
+    svg { display: block; }
+
+    @media (max-width: 760px) {
+      .window { border-inline: 0; box-shadow: none; }
+      main { padding: 30px 22px; }
+      .intro { align-items: flex-start; flex-direction: column; gap: 14px; }
+      .file-grid { grid-template-columns: 1fr; }
+      .action-zone { grid-template-columns: 1fr; }
+      .primary-button { width: 100%; }
+      .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stat:nth-child(3n) { border-right: 1px solid var(--border); }
+      .stat:nth-child(2n) { border-right: 0; }
+      .stat:nth-last-child(-n+3) { border-bottom: 1px solid var(--border); }
+      .stat:nth-last-child(-n+2) { border-bottom: 0; }
+      .result-actions { flex-direction: column-reverse; }
+      .result-actions button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window" data-od-id="application-window">
+    <header class="titlebar" data-od-id="titlebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 3v3M18 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8 15 2.2 2.2L16.5 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span>考勤汇总工具</span>
+      </div>
+      <span class="platform">离线处理 · 数据仅保存在本机</span>
+    </header>
+
+    <main>
+      <section id="setup-view" data-od-id="file-selection-workflow">
+        <div class="intro">
+          <div>
+            <h1 data-od-id="page-heading">生成考勤汇总表</h1>
+            <p>选择两份钉钉导出的 Excel 文件，工具将自动完成解析、校验与汇总。</p>
+          </div>
+          <span class="local-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.7 8 7 10 4.3-2 7-5.4 7-10V6l-7-3Z" stroke="currentColor" stroke-width="1.8"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            本地安全处理
+          </span>
+        </div>
+
+        <div class="file-grid">
+          <article class="file-card" id="punch-card" data-od-id="file-card-punch">
+            <div class="file-card-head">
+              <div>
+                <h2>打卡时间表</h2>
+                <p>用于读取员工每日上下班打卡时间。</p>
+              </div>
+              <span class="file-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z" stroke="currentColor" stroke-width="1.7"/><path d="M14 3v6h6M8 14h8M8 17h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              </span>
+            </div>
+            <div class="file-state" id="punch-state" aria-live="polite">
+              <span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>
+            </div>
+            <input id="punch-input" type="file" accept=".xlsx,.xls" hidden />
+            <button class="choose-button" id="punch-button" type="button" data-od-id="select-punch-file">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              选择打卡时间表
+            </button>
+          </article>
+
+          <article class="file-card" id="monthly-card" data-od-id="file-card-monthly">
+            <div class="file-card-head">
+              <div>
+                <h2>月度汇总表</h2>
+                <p>用于核对人员名单与月度考勤数据。</p>
+              </div>
+              <span class="file-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z" stroke="currentColor" stroke-width="1.7"/><path d="M14 3v6h6M8 14h8M8 17h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              </span>
+            </div>
+            <div class="file-state" id="monthly-state" aria-live="polite">
+              <span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>
+            </div>
+            <input id="monthly-input" type="file" accept=".xlsx,.xls" hidden />
+            <button class="choose-button" id="monthly-button" type="button" data-od-id="select-monthly-file">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              选择月度汇总表
+            </button>
+          </article>
+        </div>
+
+        <div id="inline-message" aria-live="assertive"></div>
+
+        <div class="action-zone" data-od-id="generation-actions">
+          <div class="readiness" id="readiness">
+            <span class="readiness-dot" aria-hidden="true"></span>
+            <span id="readiness-text">请选择两份文件后继续</span>
+          </div>
+          <button class="primary-button" id="generate-button" type="button" disabled data-od-id="generate-summary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h3M8 16h3M14 12h2M14 16h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>生成考勤汇总表</span>
+          </button>
+        </div>
+        <p class="footer-note">生成文件将保存在月度汇总表所在文件夹，不会上传任何数据。</p>
+      </section>
+
+      <section id="result-view" hidden data-od-id="success-result">
+        <div class="result-panel">
+          <div class="result-head">
+            <span class="success-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="m6 12 4 4 8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <div>
+              <h2>考勤汇总表已生成</h2>
+              <p>文件已保存，可以继续检查或处理下一个月份。</p>
+            </div>
+          </div>
+
+          <div class="output-box" data-od-id="output-file">
+            <div class="output-name" id="output-name" title="考勤汇总表.xlsx">考勤汇总表.xlsx</div>
+            <div class="output-path" id="output-path" title="与月度汇总表保存在同一文件夹">与月度汇总表保存在同一文件夹</div>
+          </div>
+
+          <div class="stat-grid" data-od-id="result-statistics">
+            <div class="stat"><span class="stat-label">统计月份</span><strong class="stat-value">待接入结果</strong></div>
+            <div class="stat"><span class="stat-label">统计人数</span><strong class="stat-value">— 人</strong></div>
+            <div class="stat"><span class="stat-label">加班记录</span><strong class="stat-value">— 条</strong></div>
+            <div class="stat"><span class="stat-label">餐补次数</span><strong class="stat-value">— 次</strong></div>
+            <div class="stat"><span class="stat-label">餐补金额</span><strong class="stat-value">¥ —</strong></div>
+            <div class="stat"><span class="stat-label">异常记录</span><strong class="stat-value">— 条</strong></div>
+          </div>
+
+          <div class="result-actions">
+            <button class="ghost-button" id="next-button" type="button" data-od-id="process-next-month">处理下一个月份</button>
+            <button class="secondary-button" id="regenerate-button" type="button" data-od-id="regenerate">重新生成</button>
+            <button class="primary-button" id="reveal-button" type="button" data-od-id="show-in-folder">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3V7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M3 7V5h7l2 2" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              在文件夹中显示
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="difference-dialog" aria-labelledby="difference-title">
+    <div class="dialog-body">
+      <div class="dialog-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="color:var(--warning)"><path d="M12 3 2.8 20h18.4L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 9v5m0 3v.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <h2 id="difference-title">两张表的人员名单不一致</h2>
+      </div>
+      <p>发现 3 项人员差异。继续生成时，仅汇总两张表中均存在的人员。</p>
+      <ul class="difference-list" data-od-id="person-differences">
+        <li><span>陈宇航</span><span>仅在打卡时间表</span></li>
+        <li><span>周嘉宁</span><span>仅在月度汇总表</span></li>
+        <li><span>林泽</span><span>仅在月度汇总表</span></li>
+      </ul>
+    </div>
+    <div class="dialog-actions">
+      <button class="secondary-button" id="back-button" type="button">返回更换文件</button>
+      <button class="primary-button" id="continue-button" type="button">仍然生成</button>
+    </div>
+  </dialog>
+
+  <script>
+    const state = { punch: null, monthly: null, generating: false };
+    const $ = (id) => document.getElementById(id);
+    const fileInputs = { punch: $('punch-input'), monthly: $('monthly-input') };
+
+    function iconCheck() {
+      return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="m8 12 2.5 2.5L16 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    }
+
+    function formatSize(bytes) {
+      if (!bytes) return '0 KB';
+      return bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(bytes / 1024)) + ' KB';
+    }
+
+    function renderFile(kind) {
+      const file = state[kind];
+      const label = kind === 'punch' ? '打卡时间表' : '月度汇总表';
+      const stateEl = $(kind + '-state');
+      const card = $(kind + '-card');
+      const button = $(kind + '-button');
+      if (!file) {
+        card.classList.remove('is-ready');
+        stateEl.innerHTML = '<span class="empty-state">尚未选择文件 · 支持 .xlsx / .xls</span>';
+        button.lastChild.textContent = '选择' + label;
+        return;
+      }
+      card.classList.add('is-ready');
+      stateEl.innerHTML = '<div class="selected-row">' + iconCheck() +
+        '<span class="file-name" title="' + file.name.replaceAll('"', '&quot;') + '">' + file.name + '</span>' +
+        '<button class="link-button" type="button" data-replace="' + kind + '">更换</button>' +
+        '<span class="file-meta">已选择 · ' + formatSize(file.size) + ' · 文件格式有效</span></div>';
+      button.lastChild.textContent = '重新选择';
+      stateEl.querySelector('[data-replace]').addEventListener('click', () => fileInputs[kind].click());
+    }
+
+    function updateReadiness() {
+      const ready = Boolean(state.punch && state.monthly);
+      $('generate-button').disabled = !ready || state.generating;
+      $('readiness').classList.toggle('ready', ready);
+      $('readiness-text').textContent = ready ? '两份文件已就绪，可以开始生成' : '请选择两份文件后继续';
+      if (ready) $('inline-message').innerHTML = '';
+    }
+
+    function onFile(kind, file) {
+      if (!file) return;
+      state[kind] = file;
+      renderFile(kind);
+      updateReadiness();
+    }
+
+    $('punch-button').addEventListener('click', () => fileInputs.punch.click());
+    $('monthly-button').addEventListener('click', () => fileInputs.monthly.click());
+    fileInputs.punch.addEventListener('change', (event) => onFile('punch', event.target.files[0]));
+    fileInputs.monthly.addEventListener('change', (event) => onFile('monthly', event.target.files[0]));
+
+    function hasKeyword(keyword) {
+      return [state.punch, state.monthly].some(file => file && file.name.includes(keyword));
+    }
+
+    function showBlockingError() {
+      $('inline-message').innerHTML =
+        '<div class="message error" data-od-id="blocking-error">' +
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v6m0 4v.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' +
+        '<div class="message-body"><strong>无法读取月度汇总表</strong><p>文件内容不完整或已损坏。请从钉钉重新导出后更换文件。</p></div></div>';
+    }
+
+    function beginGeneration() {
+      if (state.generating) return;
+      state.generating = true;
+      const button = $('generate-button');
+      button.disabled = true;
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>正在解析并计算…</span>';
+      $('punch-button').disabled = true;
+      $('monthly-button').disabled = true;
+      $('readiness-text').textContent = '正在校验文件，请稍候';
+      window.setTimeout(showSuccess, 1500);
+    }
+
+    function resetGenerateButton() {
+      state.generating = false;
+      $('punch-button').disabled = false;
+      $('monthly-button').disabled = false;
+      $('generate-button').innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h3M8 16h3M14 12h2M14 16h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>生成考勤汇总表</span>';
+      updateReadiness();
+    }
+
+    function showSuccess() {
+      resetGenerateButton();
+      $('setup-view').hidden = true;
+      $('result-view').hidden = false;
+      $('result-view').focus?.();
+    }
+
+    $('generate-button').addEventListener('click', () => {
+      if (hasKeyword('损坏') || hasKeyword('错误')) {
+        showBlockingError();
+        return;
+      }
+      if (hasKeyword('差异')) {
+        $('difference-dialog').showModal();
+        return;
+      }
+      beginGeneration();
+    });
+
+    $('back-button').addEventListener('click', () => $('difference-dialog').close());
+    $('continue-button').addEventListener('click', () => {
+      $('difference-dialog').close();
+      beginGeneration();
+    });
+
+    $('regenerate-button').addEventListener('click', () => {
+      $('result-view').hidden = true;
+      $('setup-view').hidden = false;
+      beginGeneration();
+    });
+
+    $('next-button').addEventListener('click', () => {
+      state.punch = null;
+      state.monthly = null;
+      fileInputs.punch.value = '';
+      fileInputs.monthly.value = '';
+      renderFile('punch');
+      renderFile('monthly');
+      $('result-view').hidden = true;
+      $('setup-view').hidden = false;
+      updateReadiness();
+    });
+
+    $('reveal-button').addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      const previous = button.innerHTML;
+      button.innerHTML = iconCheck() + '<span>已在文件夹中定位</span>';
+      window.setTimeout(() => { button.innerHTML = previous; }, 1800);
+    });
+  </script>
+</body>
+</html>
