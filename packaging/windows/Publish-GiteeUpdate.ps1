@@ -189,7 +189,12 @@ $existingManifest = Invoke-RestMethod `
 if ($manifestStatusCode -eq 404) {
     $manifestSha = $null
 } elseif ($manifestStatusCode -ge 200 -and $manifestStatusCode -lt 300) {
-    $manifestSha = [string]$existingManifest.sha
+    $shaProperty = $existingManifest.PSObject.Properties["sha"]
+    $manifestSha = if ($null -eq $shaProperty) {
+        $null
+    } else {
+        [string]$shaProperty.Value
+    }
 } else {
     throw "Gitee update manifest lookup failed with HTTP $manifestStatusCode."
 }
@@ -221,7 +226,8 @@ if ($releaseStatusCode -eq 404) {
 } elseif ($releaseStatusCode -lt 200 -or $releaseStatusCode -ge 300) {
     throw "Gitee release lookup failed with HTTP $releaseStatusCode."
 }
-if ($null -eq $release.id) {
+$releaseIdProperty = $release.PSObject.Properties["id"]
+if ($null -eq $releaseIdProperty -or $null -eq $releaseIdProperty.Value) {
     throw "Gitee release creation returned an invalid response."
 }
 
