@@ -41,15 +41,17 @@ if ($setupFiles.Count -ne 1) {
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
 $escapedTag = [Uri]::EscapeDataString("v$Version")
-$release = $null
-try {
-    $release = Invoke-RestMethod `
-        -Uri "$apiBase/releases/tags/$escapedTag?access_token=$escapedToken" `
-        -Method Get
-} catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 404) {
-        throw
-    }
+
+$releaseStatusCode = 0
+$release = Invoke-RestMethod `
+    -Uri "$apiBase/releases/tags/$escapedTag?access_token=$escapedToken" `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable releaseStatusCode
+if ($releaseStatusCode -eq 404) {
+    $release = $null
+} elseif ($releaseStatusCode -lt 200 -or $releaseStatusCode -ge 300) {
+    throw "Gitee release lookup failed with HTTP $releaseStatusCode."
 }
 
 if ($null -eq $release) {
@@ -133,15 +135,16 @@ $escapedManifestPath = ($manifestPath -split "/" | ForEach-Object {
     [Uri]::EscapeDataString($_)
 }) -join "/"
 $manifestEndpoint = "$apiBase/contents/$escapedManifestPath"
-$existingManifest = $null
-try {
-    $existingManifest = Invoke-RestMethod `
-        -Uri "$manifestEndpoint?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
-        -Method Get
-} catch {
-    if ($_.Exception.Response.StatusCode.value__ -ne 404) {
-        throw
-    }
+$manifestStatusCode = 0
+$existingManifest = Invoke-RestMethod `
+    -Uri "$manifestEndpoint?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable manifestStatusCode
+if ($manifestStatusCode -eq 404) {
+    $existingManifest = $null
+} elseif ($manifestStatusCode -lt 200 -or $manifestStatusCode -ge 300) {
+    throw "Gitee update manifest lookup failed with HTTP $manifestStatusCode."
 }
 
 $manifestBody = @{
