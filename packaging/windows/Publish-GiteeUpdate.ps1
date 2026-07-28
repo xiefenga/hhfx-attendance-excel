@@ -44,7 +44,7 @@ $escapedTag = [Uri]::EscapeDataString("v$Version")
 
 $releaseStatusCode = 0
 $release = Invoke-RestMethod `
-    -Uri "$apiBase/releases/tags/$escapedTag?access_token=$escapedToken" `
+    -Uri "$apiBase/releases/tags/${escapedTag}?access_token=$escapedToken" `
     -Method Get `
     -SkipHttpErrorCheck `
     -StatusCodeVariable releaseStatusCode
@@ -80,7 +80,7 @@ function Publish-ReleaseAsset {
 
     $existingAssets = @(
         Invoke-RestMethod `
-            -Uri "$assetsEndpoint?access_token=$escapedToken&per_page=100" `
+            -Uri "${assetsEndpoint}?access_token=$escapedToken&per_page=100" `
             -Method Get
     )
     foreach ($asset in $existingAssets) {
@@ -137,7 +137,7 @@ $escapedManifestPath = ($manifestPath -split "/" | ForEach-Object {
 $manifestEndpoint = "$apiBase/contents/$escapedManifestPath"
 $manifestStatusCode = 0
 $existingManifest = Invoke-RestMethod `
-    -Uri "$manifestEndpoint?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
+    -Uri "${manifestEndpoint}?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
     -Method Get `
     -SkipHttpErrorCheck `
     -StatusCodeVariable manifestStatusCode
