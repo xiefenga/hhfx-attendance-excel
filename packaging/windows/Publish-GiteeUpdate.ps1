@@ -38,6 +38,17 @@ if ($setupFiles.Count -ne 1) {
     throw "Expected exactly one Squirrel setup executable, found $($setupFiles.Count)."
 }
 
+$maximumGiteeAssetSize = 100000000
+foreach ($assetFile in @($fullPackages[0], $setupFiles[0])) {
+    if ($assetFile.Length -gt $maximumGiteeAssetSize) {
+        $sizeInMiB = [Math]::Round($assetFile.Length / 1MB, 1)
+        throw (
+            "Gitee limits release assets to 100 MB, but " +
+            "$($assetFile.Name) is $sizeInMiB MiB."
+        )
+    }
+}
+
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
 $escapedTag = [Uri]::EscapeDataString("v$Version")

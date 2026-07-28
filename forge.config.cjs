@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const path = require("node:path");
 
 const projectRoot = __dirname;
@@ -6,12 +7,39 @@ const iconDirectory = path.join(projectRoot, "assets", "icons");
 const macIcon = path.join(iconDirectory, "attendance-ledger.icns");
 const windowsIcon = path.join(iconDirectory, "attendance-ledger.ico");
 
+function removeUnusedWindowsLocales(
+  buildPath,
+  _electronVersion,
+  platform,
+  _arch,
+  callback
+) {
+  try {
+    if (platform === "win32") {
+      const localesDirectory = path.join(buildPath, "locales");
+      const retainedLocales = new Set(["en-US.pak", "zh-CN.pak"]);
+      for (const localeFile of fs.readdirSync(localesDirectory)) {
+        if (!retainedLocales.has(localeFile)) {
+          fs.rmSync(path.join(localesDirectory, localeFile), {
+            force: true,
+            recursive: true
+          });
+        }
+      }
+    }
+    callback();
+  } catch (error) {
+    callback(error);
+  }
+}
+
 const packagerConfig = {
   asar: true,
   appBundleId: "com.attendanceledger.desktop",
   appCategoryType: "public.app-category.productivity",
   executableName: "attendance-ledger",
   extraResource,
+  afterExtract: [removeUnusedWindowsLocales],
   ignore: [
     /^\/(?!dist(?:\/|$)|package\.json$).+/
   ]
