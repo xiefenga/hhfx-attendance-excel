@@ -1,7 +1,7 @@
 {
   "name": "attendance-ledger",
   "productName": "Attendance Ledger",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "离线考勤 Excel 解析与汇总工具",
   "author": "Attendance Ledger",
   "license": "UNLICENSED",
@@ -58,7 +58,6 @@
     "macos-alias@0.2.12": true
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.1",
-    "update-electron-app": "3.3.0"
+    "electron-squirrel-startup": "^1.0.1"
   }
 }

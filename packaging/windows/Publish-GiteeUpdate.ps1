@@ -21,33 +21,13 @@ if ([string]::IsNullOrWhiteSpace($accessToken)) {
 }
 
 $resolvedArtifactsDirectory = (Resolve-Path -LiteralPath $ArtifactsDirectory).Path
-$releaseFile = Join-Path $resolvedArtifactsDirectory "RELEASES"
-$fullPackages = @(
-    Get-ChildItem -LiteralPath $resolvedArtifactsDirectory -File -Filter "*-full.nupkg"
-)
 $setupFiles = @(
     Get-ChildItem -LiteralPath $resolvedArtifactsDirectory -File -Filter "*Setup.exe"
 )
-if (-not (Test-Path -LiteralPath $releaseFile -PathType Leaf)) {
-    throw "Squirrel RELEASES file not found: $releaseFile"
-}
-if ($fullPackages.Count -ne 1) {
-    throw "Expected exactly one full Squirrel package, found $($fullPackages.Count)."
-}
 if ($setupFiles.Count -ne 1) {
     throw "Expected exactly one Squirrel setup executable, found $($setupFiles.Count)."
 }
-
-$maximumGiteeAssetSize = 100000000
-foreach ($assetFile in @($fullPackages[0], $setupFiles[0])) {
-    if ($assetFile.Length -gt $maximumGiteeAssetSize) {
-        $sizeInMiB = [Math]::Round($assetFile.Length / 1MB, 1)
-        throw (
-            "Gitee limits release assets to 100 MB, but " +
-            "$($assetFile.Name) is $sizeInMiB MiB."
-        )
-    }
-}
+$setupFile = $setupFiles[0]
 
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
@@ -75,7 +55,7 @@ if ($null -eq $release) {
             tag_name = "v$Version"
             target_commitish = $Branch
             name = "Attendance Ledger v$Version"
-            body = "Attendance Ledger Windows x64 自动更新制品。"
+            body = "Attendance Ledger Windows x64 分片自动更新制品。"
             prerelease = "false"
         }
 }
@@ -115,37 +95,62 @@ function Publish-ReleaseAsset {
         }
 }
 
-$packageAsset = Publish-ReleaseAsset -File $fullPackages[0]
-Publish-ReleaseAsset -File $setupFiles[0] | Out-Null
+$partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version"
+New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
+Get-ChildItem -LiteralPath $partsDirectory -File | Remove-Item -Force
 
-$releaseLines = @(
-    Get-Content -LiteralPath $releaseFile |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-)
-if ($releaseLines.Count -ne 1) {
-    throw "Expected one entry in RELEASES, found $($releaseLines.Count)."
-}
-$releaseMatch = [regex]::Match(
-    $releaseLines[0],
-    "^(?<sha>\S+)\s+\S+\s+(?<size>\d+)$"
-)
-if (-not $releaseMatch.Success) {
-    throw "Unexpected RELEASES entry: $($releaseLines[0])"
+$chunkSize = 80000000
+$inputStream = [IO.File]::OpenRead($setupFile.FullName)
+$partFiles = [Collections.Generic.List[IO.FileInfo]]::new()
+try {
+    $partNumber = 1
+    while ($inputStream.Position -lt $inputStream.Length) {
+        $remaining = $inputStream.Length - $inputStream.Position
+        $bytesToRead = [int][Math]::Min($chunkSize, $remaining)
+        $buffer = [byte[]]::new($bytesToRead)
+        $offset = 0
+        while ($offset -lt $bytesToRead) {
+            $read = $inputStream.Read($buffer, $offset, $bytesToRead - $offset)
+            if ($read -eq 0) {
+                throw "Unexpected end of installer while creating update parts."
+            }
+            $offset += $read
+        }
+        $partName = "Attendance-Ledger-$Version-Setup.exe.part{0:D3}" -f $partNumber
+        $partPath = Join-Path $partsDirectory $partName
+        [IO.File]::WriteAllBytes($partPath, $buffer)
+        $partFiles.Add((Get-Item -LiteralPath $partPath))
+        $partNumber += 1
+    }
+} finally {
+    $inputStream.Dispose()
 }
 
-$publishedRelease = (
-    "$($releaseMatch.Groups['sha'].Value) " +
-    "$($packageAsset.browser_download_url) " +
-    "$($releaseMatch.Groups['size'].Value)"
-)
+$publishedParts = @()
+foreach ($partFile in $partFiles) {
+    Write-Host "Uploading $($partFile.Name) ($($partFile.Length) bytes)..."
+    $partAsset = Publish-ReleaseAsset -File $partFile
+    $publishedParts += @{
+        url = [string]$partAsset.browser_download_url
+        size = [long]$partFile.Length
+    }
+}
+
+$manifest = @{
+    version = $Version
+    sha256 = (Get-FileHash -LiteralPath $setupFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    size = [long]$setupFile.Length
+    parts = $publishedParts
+}
+$manifestJson = $manifest | ConvertTo-Json -Depth 4
+$manifestFile = Join-Path $partsDirectory "update.json"
 [IO.File]::WriteAllText(
-    $releaseFile,
-    "$publishedRelease`n",
+    $manifestFile,
+    "$manifestJson`n",
     [Text.UTF8Encoding]::new($false)
 )
-Publish-ReleaseAsset -File (Get-Item -LiteralPath $releaseFile) | Out-Null
 
-$manifestPath = "win32/x64/RELEASES"
+$manifestPath = "win32/x64/update.json"
 $escapedManifestPath = ($manifestPath -split "/" | ForEach-Object {
     [Uri]::EscapeDataString($_)
 }) -join "/"
@@ -164,7 +169,7 @@ if ($manifestStatusCode -eq 404) {
 
 $manifestBody = @{
     access_token = $accessToken
-    content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($releaseFile))
+    content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestFile))
     message = "chore(release): 发布 v$Version Windows 更新清单"
     branch = $Branch
 }
@@ -184,4 +189,4 @@ if ($null -eq $existingManifest) {
 }
 
 Write-Host "Published Attendance Ledger v$Version update to Gitee."
-Write-Host "Feed: https://gitee.com/$Owner/$Repository/raw/$Branch/win32/x64"
+Write-Host "Manifest: https://gitee.com/$Owner/$Repository/raw/$Branch/$manifestPath"
