@@ -31,6 +31,31 @@ $setupFile = $setupFiles[0]
 
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
+$manifestPath = "win32/x64/update.json"
+$publishedManifestUrl = (
+    "https://gitee.com/$Owner/$Repository/raw/$Branch/$manifestPath"
+)
+$publishedManifestStatusCode = 0
+$publishedManifest = Invoke-RestMethod `
+    -Uri $publishedManifestUrl `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable publishedManifestStatusCode
+if ($publishedManifestStatusCode -ge 200 -and $publishedManifestStatusCode -lt 300) {
+    $publishedManifestJson = $publishedManifest | ConvertTo-Json -Depth 4 -Compress
+    $publishedVersionMatch = [regex]::Match(
+        $publishedManifestJson,
+        '"version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"'
+    )
+    if (
+        $publishedVersionMatch.Success -and
+        $publishedVersionMatch.Groups["version"].Value -eq $Version
+    ) {
+        Write-Host "Attendance Ledger v$Version is already published to Gitee."
+        Write-Host "Manifest: $publishedManifestUrl"
+        exit 0
+    }
+}
 
 $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version"
 New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
@@ -171,7 +196,6 @@ foreach ($partFile in $partFiles) {
         -ExistingSha $existingPartShas[[string]$partFile.Name]
 }
 
-$manifestPath = "win32/x64/update.json"
 $manifestFile = Join-Path $partsDirectory "update.json"
 [IO.File]::WriteAllText(
     $manifestFile,
@@ -189,11 +213,15 @@ $existingManifest = Invoke-RestMethod `
 if ($manifestStatusCode -eq 404) {
     $manifestSha = $null
 } elseif ($manifestStatusCode -ge 200 -and $manifestStatusCode -lt 300) {
-    $shaProperty = $existingManifest.PSObject.Properties["sha"]
-    $manifestSha = if ($null -eq $shaProperty) {
-        $null
+    $existingManifestJson = $existingManifest | ConvertTo-Json -Depth 4 -Compress
+    $shaMatch = [regex]::Match(
+        $existingManifestJson,
+        '"sha"\s*:\s*"(?<sha>[0-9a-f]+)"'
+    )
+    $manifestSha = if ($shaMatch.Success) {
+        $shaMatch.Groups["sha"].Value
     } else {
-        [string]$shaProperty.Value
+        $null
     }
 } else {
     throw "Gitee update manifest lookup failed with HTTP $manifestStatusCode."
@@ -203,33 +231,5 @@ Publish-RepositoryFile `
     -RepositoryPath $manifestPath `
     -ExistingSha $manifestSha
 
-$escapedTag = [Uri]::EscapeDataString("v$Version")
-$releaseStatusCode = 0
-$release = Invoke-RestMethod `
-    -Uri "$apiBase/releases/tags/${escapedTag}?access_token=$escapedToken" `
-    -Method Get `
-    -SkipHttpErrorCheck `
-    -StatusCodeVariable releaseStatusCode
-if ($releaseStatusCode -eq 404) {
-    $release = Invoke-RestMethod `
-        -Uri "$apiBase/releases" `
-        -Method Post `
-        -ContentType "application/x-www-form-urlencoded" `
-        -Body @{
-            access_token = $accessToken
-            tag_name = "v$Version"
-            target_commitish = $Branch
-            name = "Attendance Ledger v$Version"
-            body = "Attendance Ledger Windows x64 分片自动更新制品。"
-            prerelease = "false"
-        }
-} elseif ($releaseStatusCode -lt 200 -or $releaseStatusCode -ge 300) {
-    throw "Gitee release lookup failed with HTTP $releaseStatusCode."
-}
-$releaseIdProperty = $release.PSObject.Properties["id"]
-if ($null -eq $releaseIdProperty -or $null -eq $releaseIdProperty.Value) {
-    throw "Gitee release creation returned an invalid response."
-}
-
 Write-Host "Published Attendance Ledger v$Version update to Gitee."
-Write-Host "Manifest: https://gitee.com/$Owner/$Repository/raw/$Branch/$manifestPath"
+Write-Host "Manifest: $publishedManifestUrl"
