@@ -8,8 +8,8 @@ const attendanceDesktop: AttendanceDesktopApi = {
   selectOutput: (defaultName) => ipcRenderer.invoke("attendance:select-output", defaultName),
   parse: (inputPath, monthlyPath) =>
     ipcRenderer.invoke("attendance:parse", inputPath, monthlyPath),
-  generate: (inputPath, monthlyPath, outputPath, config) =>
-    ipcRenderer.invoke("attendance:generate", inputPath, monthlyPath, outputPath, config),
+  generate: (inputPath, monthlyPath, outputPath) =>
+    ipcRenderer.invoke("attendance:generate", inputPath, monthlyPath, outputPath),
   reveal: (outputPath) => ipcRenderer.invoke("attendance:reveal", outputPath)
 };
 

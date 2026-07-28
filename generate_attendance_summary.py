@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from attendance_core.config import AttendanceConfig
 from attendance_core.processor import generate_summary
 
 
@@ -16,7 +15,6 @@ def main() -> None:
     result = generate_summary(
         args.punch_file,
         args.output_dir,
-        AttendanceConfig(),
         monthly_file=args.monthly_file,
     )
     print(result.output_path.resolve())

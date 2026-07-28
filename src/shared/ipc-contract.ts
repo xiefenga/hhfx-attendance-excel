@@ -1,17 +1,3 @@
-export interface AttendanceConfig {
-  start_date: string;
-  end_date: string;
-  ignore_dates: string[];
-  overnight_cutoff: string;
-  work_start_time: string;
-  work_end_time: string;
-  overtime_start_time: string;
-  workday_overtime_2h_after: string;
-  workday_meal_after: string;
-  meal_allowance_amount: number;
-  output_filename: string;
-}
-
 export interface SummaryStats {
   people: number;
   detail_records: number;
@@ -37,9 +23,6 @@ export interface ParsedNonWorkday {
 export interface ParsedWorkbook {
   report_start: string;
   report_end: string;
-  suggested_start_date: string;
-  suggested_end_date: string;
-  suggested_ignore_dates: string[];
   holidays: ParsedHoliday[];
   weekend_dates: string[];
   non_workdays: ParsedNonWorkday[];
@@ -85,8 +68,7 @@ export interface AttendanceDesktopApi {
   generate(
     inputPath: string,
     monthlyPath: string,
-    outputPath: string,
-    config: AttendanceConfig
+    outputPath: string
   ): Promise<GenerateResponse>;
   reveal(outputPath: string): Promise<void>;
 }

@@ -141,7 +141,7 @@ function requestWorker<T>(method: string, payload: Record<string, unknown> = {})
 async function ensureWorker(): Promise<WorkerHello> {
   if (!workerReady) {
     workerReady = requestWorker<WorkerHello>("hello").then((result) => {
-      if (result.protocol_version !== 1) {
+      if (result.protocol_version !== 2) {
         throw new Error(`不支持的 Python worker 协议版本：${result.protocol_version}`);
       }
       return result;
@@ -223,15 +223,13 @@ function registerIpc(): void {
       _event,
       inputPath: string,
       monthlyPath: string,
-      outputPath: string,
-      config: Record<string, unknown>
+      outputPath: string
     ) => {
       await ensureWorker();
       return requestWorker("generate", {
         input_path: inputPath,
         monthly_path: monthlyPath,
-        output_path: outputPath,
-        config
+        output_path: outputPath
       });
     }
   );

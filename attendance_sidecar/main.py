@@ -12,11 +12,10 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, TextIO, cast
 
-from attendance_core.config import AttendanceConfig
 from attendance_core.processor import generate_summary, parse_sources
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 WORKER_VERSION = "0.1.0"
 
 
@@ -83,13 +82,6 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             if same_file:
                 raise WorkerRequestError("invalid_output", "输出文件不能覆盖任一原始考勤文件")
 
-        raw_config = payload.get("config")
-        if not isinstance(raw_config, dict):
-            raise WorkerRequestError("invalid_request", "config 必须是对象")
-        config = AttendanceConfig.model_validate(
-            {**raw_config, "output_filename": output_path.name}
-        )
-
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temp_dir = Path(
             tempfile.mkdtemp(prefix=".attendance-", dir=str(output_path.parent))
@@ -98,8 +90,8 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             result = generate_summary(
                 input_path,
                 temp_dir,
-                config,
                 monthly_file=monthly_path,
+                output_filename=output_path.name,
             )
             os.replace(result.output_path, output_path)
         finally:

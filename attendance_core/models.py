@@ -59,9 +59,6 @@ class ParsedNonWorkday:
 class ParsedWorkbook:
     report_start: date
     report_end: date
-    suggested_start_date: date
-    suggested_end_date: date
-    suggested_ignore_dates: list[date]
     holidays: list[ParsedHoliday]
     weekend_dates: list[date]
     non_workdays: list[ParsedNonWorkday]

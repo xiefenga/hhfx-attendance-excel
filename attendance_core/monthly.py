@@ -39,6 +39,7 @@ class MonthlyEmployee:
     department: str
     employee_id: str
     user_id: str
+    has_monthly_source: bool = True
     leave_totals: dict[str, float] = field(default_factory=dict)
     absence_days: float = 0.0
     daily_results: dict[date, str] = field(default_factory=dict)
@@ -58,10 +59,11 @@ def parse_report_range_text(value: object) -> tuple[date, date]:
         raise ValueError("月度汇总表标题中未找到完整统计日期范围")
     start_year, start_month, start_day = map(int, matches[0])
     end_year, end_month, end_day = map(int, matches[1])
-    return (
-        date(start_year, start_month, start_day),
-        date(end_year, end_month, end_day),
-    )
+    report_start = date(start_year, start_month, start_day)
+    report_end = date(end_year, end_month, end_day)
+    if report_end < report_start:
+        raise ValueError("月度汇总表标题中的统计结束日期早于开始日期")
+    return report_start, report_end
 
 
 def parse_company_name(path: Path) -> str:
@@ -83,7 +85,11 @@ def numeric(value: object) -> float:
 def parse_monthly_workbook(input_file: Path) -> MonthlyWorkbook:
     source = load_workbook(input_file, data_only=True)
     ws = source.active
-    report_start, report_end = parse_report_range_text(ws["A1"].value)
+    try:
+        report_start, report_end = parse_report_range_text(ws["A1"].value)
+    except Exception:
+        source.close()
+        raise
 
     daily_start_col: int | None = None
     leave_columns: dict[str, int] = {}
@@ -241,15 +247,12 @@ def derive_half_day_statuses(
     if "旷工" in raw_result and "旷工迟到" not in raw_result:
         morning = "旷工"
         afternoon = "旷工"
-    elif "出差" in raw_result:
-        morning = "出差"
-        afternoon = "出差"
+    elif any(status in raw_result for status in ("出差", "外出", "外勤")):
+        morning = "√"
+        afternoon = "√"
     elif "正常" in raw_result:
         morning = "√"
         afternoon = "√"
-    elif "外出" in raw_result or "外勤" in raw_result:
-        morning = "√" if first_present else "外出"
-        afternoon = "√" if last_present else "外出"
     else:
         morning = "√" if first_present else "异常"
         afternoon = "√" if last_present else "异常"
@@ -285,7 +288,6 @@ def write_attendance_summary_sheet(
     display_dates: list[date],
     date_headers: dict[date, object],
     computed_by_user_id: dict[str, dict[str, Any]],
-    ignored_dates: set[date],
 ) -> None:
     ws = wb.create_sheet("汇总表", 0)
     ws.sheet_view.showGridLines = False
@@ -343,7 +345,6 @@ def write_attendance_summary_sheet(
     normal_font = Font(name="宋体", size=9)
     anomaly_font = Font(name="宋体", size=9, bold=True, color="C00000")
     leave_font = Font(name="宋体", size=9, color="1F4E78")
-    business_font = Font(name="宋体", size=9, color="008000")
     status_fill = PatternFill("solid", fgColor="FCE4D6")
 
     for index, employee in enumerate(monthly.employees, start=1):
@@ -397,11 +398,14 @@ def write_attendance_summary_sheet(
 
         anomaly_notes: list[str] = []
         for col, current_date in enumerate(display_dates, start=date_start_col):
-            if current_date in ignored_dates:
-                continue
             day_type = day_type_for_header(date_headers.get(current_date))
-            raw_result = employee.daily_results.get(current_date, "")
-            morning, afternoon = derive_half_day_statuses(raw_result, current_date, day_type)
+            if employee.has_monthly_source:
+                raw_result = employee.daily_results.get(current_date, "")
+                morning, afternoon = derive_half_day_statuses(
+                    raw_result, current_date, day_type
+                )
+            else:
+                morning, afternoon = "", ""
             for row, status, period in (
                 (morning_row, morning, "上午"),
                 (afternoon_row, afternoon, "下午"),
@@ -414,9 +418,6 @@ def write_attendance_summary_sheet(
                     anomaly_notes.append(f"{current_date.month}/{current_date.day}{period}{status}")
                 elif status in LEAVE_TYPES:
                     cell.font = leave_font
-                elif status in {"出差", "外出"}:
-                    cell.font = business_font
-
         meal_count = int(computed.get("meal_count", 0))
         meal_amount = int(computed.get("meal_amount", 0))
         remarks: list[str] = []

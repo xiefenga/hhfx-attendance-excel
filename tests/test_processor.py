@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook, load_workbook
 
-from attendance_core.config import AttendanceConfig
-from attendance_core.monthly import derive_half_day_statuses
+from attendance_core.monthly import derive_half_day_statuses, parse_report_range_text
 from attendance_core.processor import (
     assign_punch_base_date,
     expand_cell_timeline,
@@ -14,6 +14,7 @@ from attendance_core.processor import (
     generate_summary,
     get_day_type,
     holiday_overtime,
+    is_late_for_workday,
     is_holiday_header,
     parse_workbook,
     parse_sources,
@@ -72,6 +73,9 @@ def test_monthly_half_day_status_uses_official_period_overlap() -> None:
     assert derive_half_day_statuses(
         "事假06-15 13:15到06-15 18:00 0.5天\n(08:23,12:01)", current, "工作日"
     ) == ("√", "事假")
+    assert derive_half_day_statuses("出差\n(-,-)", current, "工作日") == ("√", "√")
+    assert derive_half_day_statuses("外出\n(-,-)", current, "工作日") == ("√", "√")
+    assert derive_half_day_statuses("外勤\n(-,-)", current, "工作日") == ("√", "√")
 
 
 def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
@@ -81,13 +85,8 @@ def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
     result = generate_summary(
         punch_path,
         tmp_path,
-        AttendanceConfig(
-            start_date=date(2026, 6, 1),
-            end_date=date(2026, 6, 3),
-            ignore_dates=[],
-            output_filename="考勤汇总.xlsx",
-        ),
         monthly_file=monthly_path,
+        output_filename="考勤汇总.xlsx",
     )
 
     assert parsed.matched_employee_count == 1
@@ -105,28 +104,96 @@ def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
     workbook.close()
 
 
-def test_sample_workbook_ignores_june_29() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+def test_single_source_employees_keep_available_information(tmp_path: Path) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
 
-    assert all(row.work_date != date(2026, 6, 29) for row in result.detail_rows)
+    punch = load_workbook(punch_path)
+    punch_ws = punch.active
+    for col, value in {
+        1: "仅打卡员工",
+        3: "测试部门",
+        4: "002",
+        6: "U002",
+        7: "08:20 22:00",
+    }.items():
+        punch_ws.cell(row=6, column=col, value=value)
+    punch.save(punch_path)
+    punch.close()
+
+    monthly = load_workbook(monthly_path)
+    monthly_ws = monthly.active
+    for col, value in {
+        1: "仅月度员工",
+        3: "测试部门",
+        4: "003",
+        6: "U003",
+        37: "正常\n(08:20,18:00)",
+    }.items():
+        monthly_ws.cell(row=6, column=col, value=value)
+    monthly.save(monthly_path)
+    monthly.close()
+
+    parsed = parse_sources(punch_path, monthly_path)
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        monthly_file=monthly_path,
+        output_filename="人员差异.xlsx",
+    )
+    workbook = load_workbook(result.output_path, data_only=True)
+
+    detail_names = {
+        str(cell.value)
+        for cell in workbook["加班明细"]["A"][1:]
+        if cell.value not in (None, "")
+    }
+    monthly_names = {
+        str(workbook["汇总表"].cell(row=row, column=3).value)
+        for row in range(5, workbook["汇总表"].max_row + 1, 2)
+    }
+
+    assert parsed.matched_employee_count == 1
+    assert parsed.punch_only_employees == ["仅打卡员工"]
+    assert parsed.monthly_only_employees == ["仅月度员工"]
+    assert "仅打卡员工" in detail_names
+    assert "仅打卡员工" in monthly_names
+    assert "仅月度员工" in monthly_names
+    assert result.stats.people == 3
+    punch_only_row = next(
+        row
+        for row in range(5, workbook["汇总表"].max_row + 1, 2)
+        if workbook["汇总表"].cell(row=row, column=3).value == "仅打卡员工"
+    )
+    assert workbook["汇总表"].cell(row=punch_only_row, column=5).value == 2
+    assert workbook["汇总表"].cell(row=punch_only_row, column=15).value is None
+    assert (
+        workbook["汇总表"].cell(
+            row=punch_only_row,
+            column=workbook["汇总表"].max_column - 1,
+        ).value
+        == "餐补1次/30元"
+    )
+    workbook.close()
+
+
+def test_sample_workbook_uses_complete_report_range() -> None:
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
+
+    assert any(row.work_date == date(2026, 6, 29) for row in result.detail_rows)
 
 
 def test_workday_late_boundary_uses_0830() -> None:
-    assert generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig()).stats.late_records == 197
-
-
-def test_work_start_time_drives_late_detection() -> None:
-    result = generate_summary(
-        SOURCE,
-        ROOT / "outputs" / "tests",
-        AttendanceConfig(work_start_time=time(9, 0)),
+    base_date = date(2026, 6, 10)
+    assert not is_late_for_workday(
+        [datetime.combine(base_date, time(8, 30))], base_date
     )
-
-    assert result.stats.late_records < 215
+    assert is_late_for_workday(
+        [datetime.combine(base_date, time(8, 31))], base_date
+    )
 
 
 def test_workday_overtime_values_are_only_two_or_four() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
     workday_hours = {
         row.overtime_hours
         for row in result.detail_rows
@@ -138,13 +205,10 @@ def test_workday_overtime_values_are_only_two_or_four() -> None:
 
 def test_workday_overtime_and_meal_boundaries() -> None:
     base_date = date(2026, 6, 10)
-    config = AttendanceConfig()
-
     def calculate(last_dt: datetime) -> tuple[float, bool]:
         hours, meal, _note = workday_overtime(
             [datetime.combine(base_date, time(8, 20)), last_dt],
             base_date,
-            config,
         )
         return hours, meal
 
@@ -175,15 +239,19 @@ def test_holiday_overtime_requires_full_period_coverage() -> None:
     def punches(start: time, end: time) -> list[datetime]:
         return [datetime.combine(base_date, start), datetime.combine(base_date, end)]
 
-    assert holiday_overtime(punches(time(10, 0), time(13, 0)), base_date) == (0.0, False)
+    assert holiday_overtime(punches(time(10, 0), time(12, 0)), base_date) == (0.0, False)
     assert holiday_overtime(punches(time(10, 0), time(17, 0)), base_date) == (0.5, False)
-    assert holiday_overtime(punches(time(9, 0), time(13, 0)), base_date) == (0.5, False)
+    assert holiday_overtime(punches(time(9, 0), time(12, 0)), base_date) == (0.5, False)
+    assert holiday_overtime(punches(time(14, 0), time(17, 0)), base_date) == (0.5, False)
     assert holiday_overtime(punches(time(9, 0), time(17, 0)), base_date) == (1.0, True)
+    assert holiday_overtime(punches(time(9, 1), time(17, 0)), base_date) == (0.5, False)
+    assert holiday_overtime(punches(time(8, 59), time(17, 0)), base_date) == (1.0, True)
+    assert holiday_overtime(punches(time(10, 0), time(19, 0)), base_date) == (0.5, True)
     assert holiday_overtime(punches(time(8, 0), time(22, 0)), base_date) == (1.0, True)
 
 
 def test_early_morning_punch_stays_today_when_today_has_no_normal_start_punch() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
 
     rows = {
         (row.name, row.work_date): row
@@ -210,23 +278,20 @@ def test_early_morning_punch_stays_today_when_today_has_no_normal_start_punch() 
 
 
 def test_previous_day_incomplete_means_only_one_punch() -> None:
-    config = AttendanceConfig()
-
-    assert previous_day_is_incomplete([time(21, 14)], config)
-    assert not previous_day_is_incomplete([time(8, 25), time(21, 14)], config)
+    assert previous_day_is_incomplete([time(21, 14)])
+    assert not previous_day_is_incomplete([time(8, 25), time(21, 14)])
     assert (
         assign_punch_base_date(
             date(2026, 6, 12),
             time(6, 37),
             {date(2026, 6, 11): [time(8, 25), time(21, 14)], date(2026, 6, 12): [time(6, 37)]},
-            config,
         )
         == date(2026, 6, 12)
     )
 
 
 def test_same_cell_time_rollover_counts_as_next_day_overtime() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
 
     row = next(
         item
@@ -246,7 +311,7 @@ def test_same_cell_time_rollover_counts_as_next_day_overtime() -> None:
 
 
 def test_overnight_notes_are_human_readable() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
     notes = {row.note for row in result.detail_rows if row.note}
 
     assert "次日凌晨打卡，工作日加班按4小时折算" in notes
@@ -257,11 +322,11 @@ def test_overnight_notes_are_human_readable() -> None:
 def test_same_cell_next_day_only_uses_trailing_early_off_work_punches() -> None:
     source_date = date(2026, 6, 26)
 
-    assert expand_cell_timeline(source_date, [time(7, 30), time(1, 54)], AttendanceConfig()) == [
+    assert expand_cell_timeline(source_date, [time(7, 30), time(1, 54)]) == [
         (date(2026, 6, 26), time(7, 30)),
         (date(2026, 6, 27), time(1, 54)),
     ]
-    assert expand_cell_timeline(source_date, [time(8, 30), time(8, 20), time(18, 0)], AttendanceConfig()) == [
+    assert expand_cell_timeline(source_date, [time(8, 30), time(8, 20), time(18, 0)]) == [
         (date(2026, 6, 26), time(8, 30)),
         (date(2026, 6, 26), time(8, 20)),
         (date(2026, 6, 26), time(18, 0)),
@@ -273,7 +338,7 @@ def test_extract_times_handles_adjacent_times_without_separator() -> None:
 
 
 def test_weekend_single_punch_is_not_absent() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
 
     assert not any(
         row.name == "余祖应" and row.work_date == date(2026, 6, 13) and row.absent
@@ -282,7 +347,7 @@ def test_weekend_single_punch_is_not_absent() -> None:
 
 
 def test_holiday_header_marks_day_as_rest_day_without_config_parameter() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
 
     assert any(
         row.work_date == date(2026, 6, 19) and row.day_type == "端午节"
@@ -291,7 +356,7 @@ def test_holiday_header_marks_day_as_rest_day_without_config_parameter() -> None
 
 
 def test_weekend_day_type_uses_specific_weekday_name() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
 
     assert any(row.work_date == date(2026, 6, 13) and row.day_type == "周六" for row in result.detail_rows)
     assert any(row.work_date == date(2026, 6, 14) and row.day_type == "周日" for row in result.detail_rows)
@@ -327,7 +392,7 @@ def test_summary_uses_header_not_weekday_for_makeup_workdays_and_rest_days() -> 
     wb.save(source)
     wb.close()
 
-    result = generate_summary(source, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(source, ROOT / "outputs" / "tests")
     rows = {row.work_date: row for row in result.detail_rows}
 
     assert rows[date(2026, 6, 13)].day_type == "工作日"
@@ -340,7 +405,7 @@ def test_summary_uses_header_not_weekday_for_makeup_workdays_and_rest_days() -> 
 
 
 def test_person_summary_splits_overtime_hours_by_day_type() -> None:
-    result = generate_summary(SOURCE, ROOT / "outputs" / "tests", AttendanceConfig())
+    result = generate_summary(SOURCE, ROOT / "outputs" / "tests")
     wb = load_workbook(result.output_path, data_only=True)
     ws = wb["人员汇总"]
 
@@ -393,9 +458,6 @@ def test_parse_workbook_returns_detected_defaults() -> None:
 
     assert parsed.report_start == date(2026, 6, 1)
     assert parsed.report_end == date(2026, 6, 29)
-    assert parsed.suggested_start_date == date(2026, 6, 1)
-    assert parsed.suggested_end_date == date(2026, 6, 29)
-    assert parsed.suggested_ignore_dates == []
     assert [(item.date, item.label) for item in parsed.holidays] == [
         (date(2026, 6, 19), "端午节")
     ]
@@ -410,3 +472,29 @@ def test_parse_workbook_returns_detected_defaults() -> None:
     ]
     assert parsed.employee_count == 75
     assert parsed.date_count == 29
+
+
+def test_report_titles_require_complete_ordered_date_ranges(tmp_path: Path) -> None:
+    punch_path = tmp_path / "打卡时间.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["A1"] = "打卡时间 2026-06-01"
+    workbook.save(punch_path)
+    workbook.close()
+
+    with pytest.raises(ValueError, match="打卡时间表标题中未找到完整统计日期范围"):
+        parse_workbook(punch_path)
+
+    with pytest.raises(ValueError, match="打卡时间表标题中的统计结束日期早于开始日期"):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet["A1"] = "打卡时间 2026-06-30 至 2026-06-01"
+        workbook.save(punch_path)
+        workbook.close()
+        parse_workbook(punch_path)
+
+    with pytest.raises(ValueError, match="月度汇总表标题中未找到完整统计日期范围"):
+        parse_report_range_text("月度汇总 2026-06-01")
+
+    with pytest.raises(ValueError, match="月度汇总表标题中的统计结束日期早于开始日期"):
+        parse_report_range_text("月度汇总 2026-06-30 至 2026-06-01")

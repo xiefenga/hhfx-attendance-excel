@@ -1,5 +1,4 @@
 import type {
-  AttendanceConfig,
   DesktopSelection,
   GenerateResponse,
   ParseResponse
@@ -25,10 +24,9 @@ export async function parseWorkbook(
 export async function generateSummary(
   inputPath: string,
   monthlyPath: string,
-  outputPath: string,
-  config: AttendanceConfig
+  outputPath: string
 ): Promise<GenerateResponse> {
-  return desktopApi().generate(inputPath, monthlyPath, outputPath, config);
+  return desktopApi().generate(inputPath, monthlyPath, outputPath);
 }
 
 export async function selectDesktopOutput(defaultName: string): Promise<string | null> {

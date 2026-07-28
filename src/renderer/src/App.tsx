@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
-  AttendanceConfig,
   DesktopSelection,
   GenerateResponse,
   ParseResponse
@@ -136,23 +135,11 @@ function compactDate(value: string): string {
   return value.replace(/-/g, "");
 }
 
-function buildConfig(parsed: ParseResponse): AttendanceConfig {
+function buildOutputFilename(parsed: ParseResponse): string {
   const { detected } = parsed;
-  return {
-    start_date: detected.suggested_start_date,
-    end_date: detected.suggested_end_date,
-    ignore_dates: detected.suggested_ignore_dates,
-    overnight_cutoff: "07:00:00",
-    work_start_time: "08:30:00",
-    work_end_time: "18:00:00",
-    overtime_start_time: "19:00:00",
-    workday_overtime_2h_after: "21:00:00",
-    workday_meal_after: "22:00:00",
-    meal_allowance_amount: 30,
-    output_filename: `考勤汇总_${compactDate(detected.suggested_start_date)}_${compactDate(
-      detected.suggested_end_date
-    )}.xlsx`
-  };
+  return `考勤汇总_${compactDate(detected.report_start)}_${compactDate(
+    detected.report_end
+  )}.xlsx`;
 }
 
 function classifyError(caught: unknown): ErrorState {
@@ -287,8 +274,7 @@ export default function App() {
     if (!punchFile || !monthlyFile) {
       return;
     }
-    const config = buildConfig(parsed);
-    const outputPath = await selectDesktopOutput(config.output_filename);
+    const outputPath = await selectDesktopOutput(buildOutputFilename(parsed));
     if (!outputPath) {
       return;
     }
@@ -296,8 +282,7 @@ export default function App() {
     const generated = await generateSummary(
       punchFile.path,
       monthlyFile.path,
-      outputPath,
-      config
+      outputPath
     );
     setResult(generated);
     setResultOpen(true);
@@ -413,7 +398,8 @@ export default function App() {
               <div className="validation-summary">
                 <CheckIcon />
                 <span>
-                  已校验，{parseResult.detected.matched_employee_count} 名员工可参与汇总
+                  已校验，打卡时间表 {parseResult.detected.employee_count} 人，月度汇总表{" "}
+                  {parseResult.detected.monthly_employee_count} 人
                 </span>
               </div>
             ) : null}
@@ -448,7 +434,7 @@ export default function App() {
           </div>
           <p id="difference-description">
             发现 {differences.length || parseResult?.detected.source_warnings.length || 0}{" "}
-            项人员差异。继续生成时，仅汇总两张表中均存在的人员。
+            项人员差异。继续生成时会保留两张表各自可提供的统计信息；跨表数据仅对能够匹配的人员合并。
           </p>
           <ul className="difference-list">
             {differences.length > 0
@@ -504,7 +490,7 @@ export default function App() {
             <h2 id="result-title">考勤汇总表已生成</h2>
             <p className="result-description">
               {result
-                ? `已汇总 ${result.stats.people} 人、${result.stats.overtime_records} 条加班记录与 ${result.stats.meal_records} 次餐补。`
+                ? `已汇总 ${result.stats.people} 人（按两张表人员并集）、${result.stats.overtime_records} 条加班记录与 ${result.stats.meal_records} 次餐补。`
                 : ""}
             </p>
           </div>

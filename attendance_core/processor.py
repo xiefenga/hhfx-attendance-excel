@@ -11,7 +11,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from attendance_core.config import AttendanceConfig
 from attendance_core.models import (
     DetailRow,
     GenerationResult,
@@ -21,13 +20,20 @@ from attendance_core.models import (
     SummaryStats,
 )
 from attendance_core.monthly import (
+    MonthlyEmployee,
     MonthlyWorkbook,
     parse_monthly_workbook,
     write_attendance_summary_sheet,
 )
 
 
-STAT_MONTH = date(2026, 6, 1)
+OVERNIGHT_CUTOFF = time(7, 0)
+WORK_START_TIME = time(8, 30)
+OVERTIME_START_TIME = time(19, 0)
+WORKDAY_OVERTIME_2H_AFTER = time(21, 0)
+WORKDAY_MEAL_AFTER = time(22, 0)
+MEAL_ALLOWANCE_AMOUNT = 30
+DEFAULT_OUTPUT_FILENAME = "考勤加班汇总.xlsx"
 WEEKEND_HEADER_LABELS = {
     "六": "周六",
     "日": "周日",
@@ -86,21 +92,19 @@ def extract_times(value: object) -> list[time]:
     return times
 
 
-def expand_cell_timeline(
-    source_date: date, times: list[time], config: AttendanceConfig
-) -> list[tuple[date, time]]:
+def expand_cell_timeline(source_date: date, times: list[time]) -> list[tuple[date, time]]:
     if not times:
         return []
 
     first_trailing_early_index = len(times)
     while (
         first_trailing_early_index > 0
-        and times[first_trailing_early_index - 1] < config.overnight_cutoff
+        and times[first_trailing_early_index - 1] < OVERNIGHT_CUTOFF
     ):
         first_trailing_early_index -= 1
 
     has_same_day_punch_before_trailing_early = any(
-        punch >= config.overnight_cutoff for punch in times[:first_trailing_early_index]
+        punch >= OVERNIGHT_CUTOFF for punch in times[:first_trailing_early_index]
     )
     if not has_same_day_punch_before_trailing_early:
         first_trailing_early_index = len(times)
@@ -116,36 +120,18 @@ def expand_cell_timeline(
     ]
 
 
-def parse_report_start(ws: Any) -> date:
-    title = str(ws["A1"].value or "")
-    match = re.search(r"(\d{4})-(\d{2})-(\d{2})", title)
-    if not match:
-        return STAT_MONTH
-    year, month, day = map(int, match.groups())
-    return date(year, month, day)
-
-
 def parse_report_range(ws: Any) -> tuple[date, date]:
     title = str(ws["A1"].value or "")
     matches = re.findall(r"(\d{4})-(\d{2})-(\d{2})", title)
-    if len(matches) >= 2:
-        start_year, start_month, start_day = map(int, matches[0])
-        end_year, end_month, end_day = map(int, matches[1])
-        return (
-            date(start_year, start_month, start_day),
-            date(end_year, end_month, end_day),
-        )
-    start = parse_report_start(ws)
-    return start, start
-
-
-def parse_generated_at_date(ws: Any) -> date | None:
-    text = str(ws["A2"].value or "")
-    match = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
-    if not match:
-        return None
-    year, month, day = map(int, match.groups())
-    return date(year, month, day)
+    if len(matches) < 2:
+        raise ValueError("打卡时间表标题中未找到完整统计日期范围")
+    start_year, start_month, start_day = map(int, matches[0])
+    end_year, end_month, end_day = map(int, matches[1])
+    report_start = date(start_year, start_month, start_day)
+    report_end = date(end_year, end_month, end_day)
+    if report_end < report_start:
+        raise ValueError("打卡时间表标题中的统计结束日期早于开始日期")
+    return report_start, report_end
 
 
 def is_holiday_header(header: object) -> bool:
@@ -167,7 +153,11 @@ def get_day_type(current_date: date, header: object) -> str:
 def parse_workbook(input_file: Path) -> ParsedWorkbook:
     source = load_workbook(input_file, data_only=True)
     ws = source.active
-    report_start, report_end = parse_report_range(ws)
+    try:
+        report_start, report_end = parse_report_range(ws)
+    except Exception:
+        source.close()
+        raise
     expected_date_count = (report_end - report_start).days + 1
     if ws.max_column - 6 < expected_date_count:
         source.close()
@@ -197,9 +187,6 @@ def parse_workbook(input_file: Path) -> ParsedWorkbook:
     return ParsedWorkbook(
         report_start=report_start,
         report_end=report_end,
-        suggested_start_date=report_start,
-        suggested_end_date=report_end,
-        suggested_ignore_dates=[],
         holidays=holidays,
         weekend_dates=weekend_dates,
         non_workdays=non_workdays,
@@ -277,14 +264,14 @@ def fmt_dt_for_shift(dt: datetime, base_date: date) -> str:
 
 
 def workday_overtime(
-    punches: list[datetime], base_date: date, config: AttendanceConfig
+    punches: list[datetime], base_date: date
 ) -> tuple[float, bool, str]:
     same_day_punches = [dt for dt in punches if dt.date() == base_date]
     next_day_early_punches = [
         dt
         for dt in punches
         if dt.date() == base_date + timedelta(days=1)
-        and dt.time() < config.overnight_cutoff
+        and dt.time() < OVERNIGHT_CUTOFF
     ]
 
     if next_day_early_punches:
@@ -294,10 +281,10 @@ def workday_overtime(
         return 0.0, False, ""
 
     last_same_day = max(same_day_punches)
-    if last_same_day.time() < config.overtime_start_time:
+    if last_same_day.time() < OVERTIME_START_TIME:
         return 0.0, False, ""
-    if last_same_day.time() >= config.workday_overtime_2h_after:
-        return 2.0, last_same_day.time() >= config.workday_meal_after, ""
+    if last_same_day.time() >= WORKDAY_OVERTIME_2H_AFTER:
+        return 2.0, last_same_day.time() >= WORKDAY_MEAL_AFTER, ""
     return 0.0, False, ""
 
 
@@ -329,8 +316,8 @@ def holiday_overtime(punches: list[datetime], base_date: date) -> tuple[float, b
     first_dt = min(punches)
     last_dt = max(punches)
     overtime_periods = [
-        (time(9, 0), time(13, 0), 0.5),
-        (time(13, 0), time(17, 0), 0.5),
+        (time(9, 0), time(12, 0), 0.5),
+        (time(14, 0), time(17, 0), 0.5),
     ]
     overtime_days = sum(
         days
@@ -339,27 +326,26 @@ def holiday_overtime(punches: list[datetime], base_date: date) -> tuple[float, b
         and last_dt >= datetime.combine(base_date, end_time)
     )
     overtime_days = min(overtime_days, 1.0)
-    return overtime_days, overtime_days == 1.0
+    meal = last_dt - first_dt >= timedelta(hours=8)
+    return overtime_days, meal
 
 
-def is_late_for_workday(
-    punches: list[datetime], base_date: date, config: AttendanceConfig
-) -> bool:
+def is_late_for_workday(punches: list[datetime], base_date: date) -> bool:
     same_day_punches = [dt for dt in punches if dt.date() == base_date]
     if not same_day_punches:
         return False
-    return min(same_day_punches).time() > config.work_start_time
+    return min(same_day_punches).time() > WORK_START_TIME
 
 
-def has_normal_start_punch(punches: list[time], config: AttendanceConfig) -> bool:
-    return any(config.overnight_cutoff <= punch < config.work_start_time for punch in punches)
+def has_normal_start_punch(punches: list[time]) -> bool:
+    return any(OVERNIGHT_CUTOFF <= punch < WORK_START_TIME for punch in punches)
 
 
-def has_non_early_punch(punches: list[time], config: AttendanceConfig) -> bool:
-    return any(punch >= config.overnight_cutoff for punch in punches)
+def has_non_early_punch(punches: list[time]) -> bool:
+    return any(punch >= OVERNIGHT_CUTOFF for punch in punches)
 
 
-def previous_day_is_incomplete(punches: list[time], config: AttendanceConfig) -> bool:
+def previous_day_is_incomplete(punches: list[time]) -> bool:
     return len(punches) == 1
 
 
@@ -367,20 +353,19 @@ def assign_punch_base_date(
     source_date: date,
     punch_time: time,
     natural_day_times: dict[date, list[time]],
-    config: AttendanceConfig,
 ) -> date:
-    if punch_time >= config.overnight_cutoff:
+    if punch_time >= OVERNIGHT_CUTOFF:
         return source_date
 
     today_times = natural_day_times.get(source_date, [])
-    if has_normal_start_punch(today_times, config):
+    if has_normal_start_punch(today_times):
         return source_date - timedelta(days=1)
 
-    if has_non_early_punch(today_times, config):
+    if has_non_early_punch(today_times):
         return source_date
 
     previous_times = natural_day_times.get(source_date - timedelta(days=1), [])
-    if previous_day_is_incomplete(previous_times, config):
+    if previous_day_is_incomplete(previous_times):
         return source_date - timedelta(days=1)
     return source_date
 
@@ -412,14 +397,17 @@ def style_sheet(ws: Any, freeze_cell: str) -> None:
 def generate_summary(
     input_file: Path,
     output_dir: Path,
-    config: AttendanceConfig | None = None,
     *,
     monthly_file: Path | None = None,
+    output_filename: str = DEFAULT_OUTPUT_FILENAME,
 ) -> GenerationResult:
-    active_config = config or AttendanceConfig()
     source = load_workbook(input_file, data_only=True)
     ws = source.active
-    report_start, punch_report_end = parse_report_range(ws)
+    try:
+        report_start, punch_report_end = parse_report_range(ws)
+    except Exception:
+        source.close()
+        raise
     expected_date_count = (punch_report_end - report_start).days + 1
     if ws.max_column - 6 < expected_date_count:
         source.close()
@@ -442,20 +430,16 @@ def generate_summary(
         source_date_columns.append((col, current_date, header))
         date_headers[current_date] = header
 
-    ignored_dates = set(active_config.ignore_dates)
-    display_dates: list[date] = []
-    for offset in range(expected_date_count):
-        current = report_start + timedelta(days=offset)
-        if active_config.start_date is not None and current < active_config.start_date:
-            continue
-        if active_config.end_date is not None and current > active_config.end_date:
-            continue
-        display_dates.append(current)
-    report_dates = [current for current in display_dates if current not in ignored_dates]
+    display_dates = [
+        report_start + timedelta(days=offset)
+        for offset in range(expected_date_count)
+    ]
+    report_dates = display_dates
 
     detail_rows: list[DetailRow] = []
     person_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
     punch_key_by_user_id: dict[str, tuple[str, str, str]] = {}
+    people_identity_keys: set[tuple[str, str]] = set()
 
     for row in range(5, ws.max_row + 1):
         raw_name = ws.cell(row=row, column=1).value
@@ -468,6 +452,9 @@ def generate_summary(
         key = (name, department, employee_id)
         if user_id:
             punch_key_by_user_id[user_id] = key
+            people_identity_keys.add(("user_id", user_id))
+        else:
+            people_identity_keys.add(("punch_row", str(row)))
         person_summary.setdefault(
             key,
             {
@@ -490,7 +477,7 @@ def generate_summary(
             times = extract_times(raw_value)
             if not times:
                 continue
-            expanded_times = expand_cell_timeline(source_date, times, active_config)
+            expanded_times = expand_cell_timeline(source_date, times)
             for actual_date, punch_time in expanded_times:
                 natural_day_times[actual_date].append(punch_time)
             raw_cells.append((source_date, expanded_times))
@@ -501,7 +488,7 @@ def generate_summary(
         for _source_date, expanded_times in raw_cells:
             for actual_date, punch_time in expanded_times:
                 base_date = assign_punch_base_date(
-                    actual_date, punch_time, natural_day_times, active_config
+                    actual_date, punch_time, natural_day_times
                 )
                 punch_dt = datetime.combine(actual_date, punch_time)
                 if base_date in report_dates:
@@ -527,7 +514,7 @@ def generate_summary(
 
             last_dt = punches[-1]
             last_punch = fmt_dt_for_shift(last_dt, current_date)
-            late = False if rest_day else is_late_for_workday(punches, current_date, active_config)
+            late = False if rest_day else is_late_for_workday(punches, current_date)
 
             if len(punches) == 1 and not rest_day:
                 absence = True
@@ -539,7 +526,7 @@ def generate_summary(
                     holiday_overtime_days, meal = holiday_overtime(punches, current_date)
                 else:
                     overtime_hours, meal, note = workday_overtime(
-                        punches, current_date, active_config
+                        punches, current_date
                     )
                 if last_dt.date() > current_date:
                     note = note or "次日凌晨打卡，按跨天记录处理"
@@ -557,7 +544,7 @@ def generate_summary(
                         overtime_hours=overtime_hours,
                         holiday_overtime_days=holiday_overtime_days,
                         meal=meal,
-                        meal_amount=active_config.meal_allowance_amount if meal else 0,
+                        meal_amount=MEAL_ALLOWANCE_AMOUNT if meal else 0,
                         absent=absence,
                         late=late,
                         note=note,
@@ -587,9 +574,16 @@ def generate_summary(
                 summary["meal_dates"].append(f"{fmt_date(current_date)}有餐补")
                 summary["meal_count"] = int(summary["meal_count"]) + 1
 
+    if monthly is not None:
+        for employee_index, employee in enumerate(monthly.employees):
+            if employee.user_id:
+                people_identity_keys.add(("user_id", employee.user_id))
+            else:
+                people_identity_keys.add(("monthly_row", str(employee_index)))
+
     source.close()
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / active_config.output_filename
+    output_path = output_dir / output_filename
     computed_by_user_id: dict[str, dict[str, Any]] = {}
     for user_id, key in punch_key_by_user_id.items():
         summary = person_summary[key]
@@ -599,20 +593,36 @@ def generate_summary(
             "holiday_days": summary["holiday_days"],
             "meal_count": summary["meal_count"],
             "meal_amount": int(summary["meal_count"])
-            * active_config.meal_allowance_amount,
+            * MEAL_ALLOWANCE_AMOUNT,
         }
+    summary_monthly = monthly
+    if monthly is not None:
+        monthly_user_ids = {employee.user_id for employee in monthly.employees}
+        punch_only_employees = [
+            MonthlyEmployee(
+                name=key[0],
+                department=key[1],
+                employee_id=key[2],
+                user_id=user_id,
+                has_monthly_source=False,
+            )
+            for user_id, key in punch_key_by_user_id.items()
+            if user_id not in monthly_user_ids
+        ]
+        summary_monthly = replace(
+            monthly,
+            employees=[*monthly.employees, *punch_only_employees],
+        )
     write_workbook(
         output_path,
         detail_rows,
         person_summary,
-        active_config,
-        monthly=monthly,
+        monthly=summary_monthly,
         display_dates=display_dates,
         date_headers=date_headers,
         computed_by_user_id=computed_by_user_id,
-        ignored_dates=ignored_dates,
     )
-    stats = build_stats(detail_rows, len(person_summary))
+    stats = build_stats(detail_rows, len(people_identity_keys))
     return GenerationResult(output_path=output_path, detail_rows=detail_rows, stats=stats)
 
 
@@ -641,13 +651,11 @@ def write_workbook(
     output_path: Path,
     detail_rows: list[DetailRow],
     person_summary: dict[tuple[str, str, str], dict[str, Any]],
-    config: AttendanceConfig,
     *,
     monthly: MonthlyWorkbook | None = None,
     display_dates: list[date] | None = None,
     date_headers: dict[date, object] | None = None,
     computed_by_user_id: dict[str, dict[str, Any]] | None = None,
-    ignored_dates: set[date] | None = None,
 ) -> None:
     wb = Workbook()
     detail_ws = wb.active
@@ -745,7 +753,7 @@ def write_workbook(
                 holiday_days,
                 total_hours,
                 meal_count,
-                meal_count * config.meal_allowance_amount,
+                meal_count * MEAL_ALLOWANCE_AMOUNT,
             ]
         )
     for column in ("H", "I", "J", "K"):
@@ -760,7 +768,7 @@ def write_workbook(
     rules_ws = wb.create_sheet("统计口径")
     rules = [
         ["项目", "口径"],
-        ["统计范围", "默认忽略配置中的日期；样例默认忽略2026年6月29日"],
+        ["统计范围", "完整使用源表标题中的统计日期范围，不跳过其中任何日期"],
         ["工作日", "表头为空或为阿拉伯数字时按工作日处理，用于支持周末补班"],
         ["周末", "表头为“六”“日”“周六”“周日”“周末”时按周末处理，不按真实星期几推断"],
         ["节假日", "表头为非数字、且不是周末标记的文本时按节假日处理，如“xx节”“法假”"],
@@ -768,8 +776,8 @@ def write_workbook(
         ["工作日餐补", "出勤至22:00或更晚享受餐补；有效跨天至次日的4小时加班也享受餐补"],
         ["周末加班", "完整覆盖09:00-12:00算3小时，完整覆盖14:00-17:00算3小时，完整覆盖17:00-21:00算2小时；各时段可累加，每天最多8小时"],
         ["周末餐补", "加班折算满8小时，享受餐补"],
-        ["节假日加班", "完整覆盖09:00-13:00算0.5天，完整覆盖13:00-17:00算0.5天；两个时段可累加，每天最多1天"],
-        ["节假日餐补", "加班折算满1天，享受餐补"],
+        ["节假日加班", "完整覆盖09:00-12:00算0.5天，完整覆盖14:00-17:00算0.5天；两个时段可累加，每天最多1天"],
+        ["节假日餐补", "最早打卡至最后打卡的实际跨度满8小时，享受餐补"],
         ["迟到", "工作日当天第一条凌晨打卡截止及之后的打卡晚于上班时间，标记迟到；周末/节假日不判迟到"],
         ["凌晨打卡截止", "次日凌晨打卡截止前打卡是跨天加班的打卡约束"],
         ["旷工", "工作日只有一个打卡时间视为旷工；周末/节假日只有一个打卡时间不视为旷工"],
@@ -787,7 +795,6 @@ def write_workbook(
             display_dates,
             date_headers or {},
             computed_by_user_id or {},
-            ignored_dates or set(),
         )
 
     wb.save(output_path)

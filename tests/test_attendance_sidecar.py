@@ -40,7 +40,7 @@ def test_worker_hello() -> None:
     assert response == {
         "request_id": "hello-1",
         "ok": True,
-        "result": {"protocol_version": 1, "worker_version": "0.1.0"},
+        "result": {"protocol_version": 2, "worker_version": "0.1.0"},
     }
 
 
@@ -65,19 +65,6 @@ def test_worker_parse_and_generate(tmp_path: Path) -> None:
                 "input_path": str(SOURCE),
                 "monthly_path": str(monthly_path),
                 "output_path": str(output_path),
-                "config": {
-                    "start_date": "2026-06-01",
-                    "end_date": "2026-06-28",
-                    "ignore_dates": ["2026-06-29"],
-                    "overnight_cutoff": "07:00:00",
-                    "work_start_time": "08:30:00",
-                    "work_end_time": "18:00:00",
-                    "overtime_start_time": "19:00:00",
-                    "workday_overtime_2h_after": "21:00:00",
-                    "workday_meal_after": "22:00:00",
-                    "meal_allowance_amount": 30,
-                    "output_filename": "ignored.xlsx",
-                },
             },
         }
     )
@@ -89,7 +76,7 @@ def test_worker_parse_and_generate(tmp_path: Path) -> None:
     assert parsed["result"]["detected"]["matched_employee_count"] == 75
     assert generated["ok"] is True
     assert generated["result"]["output_path"] == str(output_path)
-    assert generated["result"]["stats"]["late_records"] == 197
+    assert generated["result"]["stats"]["late_records"] == 205
     assert output_path.read_bytes().startswith(b"PK")
 
 
@@ -102,7 +89,6 @@ def test_worker_rejects_overwriting_source() -> None:
                 "input_path": str(SOURCE),
                 "monthly_path": str(SOURCE),
                 "output_path": str(SOURCE),
-                "config": {},
             },
         }
     )
