@@ -84,7 +84,11 @@ function Publish-ReleaseAsset {
             -Method Get
     )
     foreach ($asset in $existingAssets) {
-        if ($asset.name -eq $File.Name) {
+        if (
+            $null -ne $asset -and
+            $null -ne $asset.PSObject.Properties["name"] -and
+            $asset.name -eq $File.Name
+        ) {
             Invoke-RestMethod `
                 -Uri "$assetsEndpoint/$($asset.id)?access_token=$escapedToken" `
                 -Method Delete | Out-Null
