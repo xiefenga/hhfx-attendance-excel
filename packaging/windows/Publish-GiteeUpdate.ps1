@@ -86,26 +86,25 @@ function Publish-ReleaseAsset {
         }
     }
 
-    for ($attempt = 1; $attempt -le 3; $attempt += 1) {
-        try {
-            return Invoke-RestMethod `
-                -Uri $assetsEndpoint `
-                -Method Post `
-                -TimeoutSec 600 `
-                -Form @{
-                    access_token = $accessToken
-                    file = $File
-                }
-        } catch {
-            if ($attempt -eq 3) {
-                throw
-            }
-            Write-Warning (
-                "Upload attempt $attempt failed for $($File.Name); retrying."
-            )
-            Start-Sleep -Seconds 5
-        }
+    $uploadEndpoint = "${assetsEndpoint}?access_token=$escapedToken"
+    $curlArguments = @(
+        "--silent",
+        "--show-error",
+        "--fail-with-body",
+        "--location",
+        "--connect-timeout", "30",
+        "--max-time", "600",
+        "--retry", "2",
+        "--retry-delay", "5",
+        "--retry-all-errors",
+        "--form", "file=@$($File.FullName)",
+        $uploadEndpoint
+    )
+    $responseLines = & curl.exe @curlArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "curl.exe failed to upload $($File.Name) with exit code $LASTEXITCODE."
     }
+    return ($responseLines -join "`n") | ConvertFrom-Json
 }
 
 $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version"
