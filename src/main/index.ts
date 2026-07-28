@@ -13,7 +13,7 @@ const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_MANIFEST_URL =
   "https://gitee.com/xf_wwx/attendance-ledger-updates/raw/master/win32/x64/update.json";
 const UPDATE_ASSET_PATH_PREFIX =
-  "/xf_wwx/attendance-ledger-updates/attach_files/";
+  "/xf_wwx/attendance-ledger-updates/raw/master/win32/x64/parts/";
 
 interface UpdatePart {
   url: string;

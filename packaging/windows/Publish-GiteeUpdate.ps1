@@ -31,81 +31,6 @@ $setupFile = $setupFiles[0]
 
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
-$escapedTag = [Uri]::EscapeDataString("v$Version")
-
-$releaseStatusCode = 0
-$release = Invoke-RestMethod `
-    -Uri "$apiBase/releases/tags/${escapedTag}?access_token=$escapedToken" `
-    -Method Get `
-    -SkipHttpErrorCheck `
-    -StatusCodeVariable releaseStatusCode
-if ($releaseStatusCode -eq 404) {
-    $release = $null
-} elseif ($releaseStatusCode -lt 200 -or $releaseStatusCode -ge 300) {
-    throw "Gitee release lookup failed with HTTP $releaseStatusCode."
-}
-
-if ($null -eq $release) {
-    $release = Invoke-RestMethod `
-        -Uri "$apiBase/releases" `
-        -Method Post `
-        -ContentType "application/x-www-form-urlencoded" `
-        -Body @{
-            access_token = $accessToken
-            tag_name = "v$Version"
-            target_commitish = $Branch
-            name = "Attendance Ledger v$Version"
-            body = "Attendance Ledger Windows x64 分片自动更新制品。"
-            prerelease = "false"
-        }
-}
-
-$releaseId = [int]$release.id
-$assetsEndpoint = "$apiBase/releases/$releaseId/attach_files"
-
-function Publish-ReleaseAsset {
-    param(
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File
-    )
-
-    $existingAssets = @(
-        Invoke-RestMethod `
-            -Uri "${assetsEndpoint}?access_token=$escapedToken&per_page=100" `
-            -Method Get
-    )
-    foreach ($asset in $existingAssets) {
-        if (
-            $null -ne $asset -and
-            $null -ne $asset.PSObject.Properties["name"] -and
-            $asset.name -eq $File.Name
-        ) {
-            Invoke-RestMethod `
-                -Uri "$assetsEndpoint/$($asset.id)?access_token=$escapedToken" `
-                -Method Delete | Out-Null
-        }
-    }
-
-    $uploadEndpoint = "${assetsEndpoint}?access_token=$escapedToken"
-    $curlArguments = @(
-        "--silent",
-        "--show-error",
-        "--fail-with-body",
-        "--location",
-        "--connect-timeout", "30",
-        "--max-time", "600",
-        "--retry", "2",
-        "--retry-delay", "5",
-        "--retry-all-errors",
-        "--form", "file=@$($File.FullName)",
-        $uploadEndpoint
-    )
-    $responseLines = & curl.exe @curlArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "curl.exe failed to upload $($File.Name) with exit code $LASTEXITCODE."
-    }
-    return ($responseLines -join "`n") | ConvertFrom-Json
-}
 
 $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version"
 New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
@@ -138,12 +63,12 @@ try {
     $inputStream.Dispose()
 }
 
+$partsPath = "win32/x64/parts"
+$rawPartsBaseUrl = "https://gitee.com/$Owner/$Repository/raw/$Branch/$partsPath"
 $publishedParts = @()
 foreach ($partFile in $partFiles) {
-    Write-Host "Uploading $($partFile.Name) ($($partFile.Length) bytes)..."
-    $partAsset = Publish-ReleaseAsset -File $partFile
     $publishedParts += @{
-        url = [string]$partAsset.browser_download_url
+        url = "$rawPartsBaseUrl/$([Uri]::EscapeDataString($partFile.Name))"
         size = [long]$partFile.Length
     }
 }
@@ -155,49 +80,81 @@ $manifest = @{
     parts = $publishedParts
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 4
-$manifestFile = Join-Path $partsDirectory "update.json"
+
+$checkoutDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-gitee-v$Version"
+if (Test-Path -LiteralPath $checkoutDirectory) {
+    Remove-Item -LiteralPath $checkoutDirectory -Recurse -Force
+}
+$remoteUrl = "https://${Owner}:${escapedToken}@gitee.com/$Owner/$Repository.git"
+$env:GIT_TERMINAL_PROMPT = "0"
+& git clone --depth 1 --branch $Branch $remoteUrl $checkoutDirectory
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to clone the Gitee update repository."
+}
+
+$targetPartsDirectory = Join-Path $checkoutDirectory $partsPath
+if (Test-Path -LiteralPath $targetPartsDirectory) {
+    Remove-Item -LiteralPath $targetPartsDirectory -Recurse -Force
+}
+New-Item -ItemType Directory -Path $targetPartsDirectory -Force | Out-Null
+foreach ($partFile in $partFiles) {
+    Copy-Item -LiteralPath $partFile.FullName -Destination $targetPartsDirectory
+}
+
+$manifestPath = "win32/x64/update.json"
+$manifestFile = Join-Path $checkoutDirectory $manifestPath
 [IO.File]::WriteAllText(
     $manifestFile,
     "$manifestJson`n",
     [Text.UTF8Encoding]::new($false)
 )
 
-$manifestPath = "win32/x64/update.json"
-$escapedManifestPath = ($manifestPath -split "/" | ForEach-Object {
-    [Uri]::EscapeDataString($_)
-}) -join "/"
-$manifestEndpoint = "$apiBase/contents/$escapedManifestPath"
-$manifestStatusCode = 0
-$existingManifest = Invoke-RestMethod `
-    -Uri "${manifestEndpoint}?access_token=$escapedToken&ref=$([Uri]::EscapeDataString($Branch))" `
-    -Method Get `
-    -SkipHttpErrorCheck `
-    -StatusCodeVariable manifestStatusCode
-if ($manifestStatusCode -eq 404) {
-    $existingManifest = $null
-} elseif ($manifestStatusCode -lt 200 -or $manifestStatusCode -ge 300) {
-    throw "Gitee update manifest lookup failed with HTTP $manifestStatusCode."
+& git -C $checkoutDirectory config user.name "Attendance Ledger Release"
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to configure the Gitee release Git user."
+}
+& git -C $checkoutDirectory config user.email "release@attendance-ledger.local"
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to configure the Gitee release Git email."
+}
+& git -C $checkoutDirectory add --all
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to stage the Gitee update files."
+}
+& git -C $checkoutDirectory commit -m "chore(release): 发布 v$Version Windows 更新"
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to commit the Gitee update files."
+}
+& git -C $checkoutDirectory push origin $Branch
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to push the Gitee update files."
 }
 
-$manifestBody = @{
-    access_token = $accessToken
-    content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($manifestFile))
-    message = "chore(release): 发布 v$Version Windows 更新清单"
-    branch = $Branch
-}
-if ($null -eq $existingManifest) {
-    Invoke-RestMethod `
-        -Uri $manifestEndpoint `
+$escapedTag = [Uri]::EscapeDataString("v$Version")
+$releaseStatusCode = 0
+$release = Invoke-RestMethod `
+    -Uri "$apiBase/releases/tags/${escapedTag}?access_token=$escapedToken" `
+    -Method Get `
+    -SkipHttpErrorCheck `
+    -StatusCodeVariable releaseStatusCode
+if ($releaseStatusCode -eq 404) {
+    $release = Invoke-RestMethod `
+        -Uri "$apiBase/releases" `
         -Method Post `
         -ContentType "application/x-www-form-urlencoded" `
-        -Body $manifestBody | Out-Null
-} else {
-    $manifestBody.sha = [string]$existingManifest.sha
-    Invoke-RestMethod `
-        -Uri $manifestEndpoint `
-        -Method Put `
-        -ContentType "application/x-www-form-urlencoded" `
-        -Body $manifestBody | Out-Null
+        -Body @{
+            access_token = $accessToken
+            tag_name = "v$Version"
+            target_commitish = $Branch
+            name = "Attendance Ledger v$Version"
+            body = "Attendance Ledger Windows x64 分片自动更新制品。"
+            prerelease = "false"
+        }
+} elseif ($releaseStatusCode -lt 200 -or $releaseStatusCode -ge 300) {
+    throw "Gitee release lookup failed with HTTP $releaseStatusCode."
+}
+if ($null -eq $release.id) {
+    throw "Gitee release creation returned an invalid response."
 }
 
 Write-Host "Published Attendance Ledger v$Version update to Gitee."
