@@ -11,32 +11,10 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS Apple Silicon
-            os: macos-15
-            arch: arm64
-            artifact: attendance-ledger-macos-arm64
-          - name: macOS Intel
-            os: macos-15-intel
-            arch: x64
-            artifact: attendance-ledger-macos-x64
-          - name: Windows x64
-            os: windows-2025
-            arch: x64
-            artifact: attendance-ledger-windows-x64
-    runs-on: ${{ matrix.os }}
+    name: Windows x64
+    runs-on: windows-2025
     env:
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
@@ -78,22 +56,8 @@ jobs:
       - name: Run frontend type checks
         run: npm run typecheck
 
-      - name: Import macOS signing certificate
-        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
-        shell: bash
-        run: |
-          certificate_path="$RUNNER_TEMP/attendance-certificate.p12"
-          keychain_path="$RUNNER_TEMP/attendance-signing.keychain-db"
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$certificate_path"
-          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
-          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
-          security set-key-partition-list -S apple-tool:,apple: -k "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
-          security list-keychain -d user -s "$keychain_path"
-
       - name: Prepare Windows signing certificate
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+        if: env.WINDOWS_CERTIFICATE != ''
         timeout-minutes: 5
         shell: pwsh
         run: |
@@ -119,10 +83,10 @@ jobs:
           Write-Host "Certificate prepared. Self-signed: $isSelfSigned"
 
       - name: Build installers
-        run: npm run make -- --arch=${{ matrix.arch }}
+        run: npm run make -- --arch=x64
 
       - name: Verify Windows code signatures
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        if: env.WINDOWS_CERTIFICATE_FILE != ''
         shell: pwsh
         run: |
           $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
@@ -156,7 +120,7 @@ jobs:
           }
 
       - name: Prepare internal Windows release bundle
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        if: env.WINDOWS_CERTIFICATE_FILE != ''
         shell: pwsh
         run: |
           $installers = @(Get-ChildItem out/make -Recurse -File -Filter "*Setup.exe")
@@ -174,7 +138,7 @@ jobs:
           ./packaging/windows/New-InternalReleaseBundle.ps1 @bundleArguments
 
       - name: Verify internal Windows release ZIP
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE_FILE != ''
+        if: env.WINDOWS_CERTIFICATE_FILE != ''
         shell: pwsh
         run: |
           $archivePath = "out/Attendance-Ledger-Windows-x64.zip"
@@ -198,19 +162,10 @@ jobs:
             throw "Windows PowerShell installation path validation failed with exit code $LASTEXITCODE."
           }
 
-      - name: Upload macOS installers
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.artifact }}
-          path: out/make/**/*
-          if-no-files-found: error
-
       - name: Upload Windows release ZIP
-        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.artifact }}
+          name: attendance-ledger-windows-x64
           path: out/Attendance-Ledger-Windows-x64.zip
           if-no-files-found: error
 
