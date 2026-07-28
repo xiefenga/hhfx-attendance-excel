@@ -43,6 +43,15 @@ export interface ParseResponse {
   detected: ParsedWorkbook;
 }
 
+export interface ValidateResponse {
+  kind: "punch" | "monthly";
+  filename: string;
+  source_path: string;
+  employee_count: number;
+  report_start: string;
+  report_end: string;
+}
+
 export interface GenerateResponse {
   filename: string;
   output_path: string;
@@ -64,6 +73,10 @@ export interface AttendanceDesktopApi {
   hello(): Promise<WorkerHello>;
   selectInput(kind: "punch" | "monthly"): Promise<DesktopSelection | null>;
   selectOutput(defaultName: string): Promise<string | null>;
+  validate(
+    kind: "punch" | "monthly",
+    inputPath: string
+  ): Promise<ValidateResponse>;
   parse(inputPath: string, monthlyPath: string): Promise<ParseResponse>;
   generate(
     inputPath: string,

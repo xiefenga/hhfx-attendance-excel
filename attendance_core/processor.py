@@ -215,6 +215,17 @@ def workbook_employees(input_file: Path) -> dict[str, str]:
     return employees
 
 
+def monthly_workbook_employees(monthly: MonthlyWorkbook) -> dict[str, str]:
+    employees: dict[str, str] = {}
+    for employee in monthly.employees:
+        if not employee.user_id:
+            raise ValueError(f"月度汇总表中员工“{employee.name}”缺少钉钉 UserId")
+        if employee.user_id in employees:
+            raise ValueError(f"月度汇总表中存在重复钉钉 UserId：{employee.user_id}")
+        employees[employee.user_id] = employee.name
+    return employees
+
+
 def parse_sources(input_file: Path, monthly_file: Path) -> ParsedWorkbook:
     parsed = parse_workbook(input_file)
     monthly = parse_monthly_workbook(monthly_file)
@@ -222,16 +233,14 @@ def parse_sources(input_file: Path, monthly_file: Path) -> ParsedWorkbook:
         monthly.report_start,
         monthly.report_end,
     ):
-        raise ValueError("两张钉钉导出表的统计日期范围不一致")
+        raise ValueError(
+            "两张钉钉导出表的统计日期范围不一致："
+            f"打卡时间表为 {parsed.report_start} 至 {parsed.report_end}，"
+            f"月度汇总表为 {monthly.report_start} 至 {monthly.report_end}"
+        )
 
     punch_employees = workbook_employees(input_file)
-    monthly_employees: dict[str, str] = {}
-    for employee in monthly.employees:
-        if not employee.user_id:
-            raise ValueError(f"月度汇总表中员工“{employee.name}”缺少钉钉 UserId")
-        if employee.user_id in monthly_employees:
-            raise ValueError(f"月度汇总表中存在重复钉钉 UserId：{employee.user_id}")
-        monthly_employees[employee.user_id] = employee.name
+    monthly_employees = monthly_workbook_employees(monthly)
 
     punch_ids = set(punch_employees)
     monthly_ids = set(monthly_employees)

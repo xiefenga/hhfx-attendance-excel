@@ -195,12 +195,25 @@ main {
   min-width: 0;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 9px;
 }
 
 .selected-check {
   color: var(--success);
+}
+
+.file-error-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .selected-file-copy {
@@ -222,6 +235,33 @@ main {
 .file-meta {
   color: var(--meta);
   font-size: 12px;
+}
+
+.file-validation-error {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.file-validation-error strong,
+.file-validation-error span {
+  display: block;
+}
+
+.file-validation-error strong {
+  margin-bottom: 1px;
+  color: var(--danger);
+  font-weight: 650;
+}
+
+.file-validation-error span {
+  color: var(--foreground-muted);
+  overflow-wrap: anywhere;
+}
+
+.file-validation-error .file-error-suggestion {
+  margin-top: 2px;
+  color: var(--danger);
 }
 
 .choose-button {
@@ -308,6 +348,12 @@ main {
   margin-bottom: 0;
   color: var(--foreground-muted);
   overflow-wrap: anywhere;
+}
+
+.error-suggestion {
+  display: block;
+  margin-top: 3px;
+  color: var(--foreground-muted);
 }
 
 .validation-summary {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -78,6 +79,51 @@ def test_worker_parse_and_generate(tmp_path: Path) -> None:
     assert generated["result"]["output_path"] == str(output_path)
     assert generated["result"]["stats"]["late_records"] == 205
     assert output_path.read_bytes().startswith(b"PK")
+
+
+def test_worker_validates_each_source_independently(tmp_path: Path) -> None:
+    monthly_path = create_monthly_workbook(tmp_path / "月度汇总.xlsx")
+
+    punch = response_for(
+        {
+            "request_id": "validate-punch",
+            "method": "validate",
+            "payload": {"kind": "punch", "input_path": str(SOURCE)},
+        }
+    )
+    monthly = response_for(
+        {
+            "request_id": "validate-monthly",
+            "method": "validate",
+            "payload": {"kind": "monthly", "input_path": str(monthly_path)},
+        }
+    )
+
+    assert punch["ok"] is True
+    assert punch["result"]["employee_count"] == 75
+    assert punch["result"]["report_start"] == date(2026, 6, 1)
+    assert monthly["ok"] is True
+    assert monthly["result"]["employee_count"] == 75
+    assert monthly["result"]["report_end"] == date(2026, 6, 29)
+
+
+def test_worker_returns_friendly_error_for_invalid_workbook(tmp_path: Path) -> None:
+    invalid_path = tmp_path / "损坏的打卡时间表.xlsx"
+    invalid_path.write_text("not an Excel workbook", encoding="utf-8")
+
+    response = response_for(
+        {
+            "request_id": "validate-invalid",
+            "method": "validate",
+            "payload": {"kind": "punch", "input_path": str(invalid_path)},
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == {
+        "code": "invalid_workbook",
+        "message": "打卡时间表不是有效的 Excel 工作簿",
+    }
 
 
 def test_worker_rejects_overwriting_source() -> None:

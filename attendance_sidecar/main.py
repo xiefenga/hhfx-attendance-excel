@@ -6,13 +6,23 @@ import shutil
 import sys
 import tempfile
 import traceback
+from zipfile import BadZipFile
 from dataclasses import asdict
 from datetime import date
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, TextIO, cast
 
-from attendance_core.processor import generate_summary, parse_sources
+from openpyxl.utils.exceptions import InvalidFileException
+
+from attendance_core.monthly import parse_monthly_workbook
+from attendance_core.processor import (
+    generate_summary,
+    monthly_workbook_employees,
+    parse_sources,
+    parse_workbook,
+    workbook_employees,
+)
 
 
 PROTOCOL_VERSION = 2
@@ -65,6 +75,42 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             "monthly_source_path": str(monthly_path),
             "monthly_filename": monthly_path.name,
             "detected": asdict(parse_sources(input_path, monthly_path)),
+        }
+
+    if method == "validate":
+        kind = payload.get("kind")
+        if kind not in {"punch", "monthly"}:
+            raise WorkerRequestError("invalid_request", "kind 必须是 punch 或 monthly")
+        input_path = require_xlsx(payload.get("input_path"), "input_path")
+        label = "打卡时间表" if kind == "punch" else "月度汇总表"
+        if not input_path.is_file():
+            raise WorkerRequestError("file_not_found", f"{label}不存在")
+        try:
+            if kind == "punch":
+                parsed = parse_workbook(input_path)
+                employees = workbook_employees(input_path)
+                report_start = parsed.report_start
+                report_end = parsed.report_end
+            else:
+                monthly = parse_monthly_workbook(input_path)
+                employees = monthly_workbook_employees(monthly)
+                report_start = monthly.report_start
+                report_end = monthly.report_end
+        except (BadZipFile, InvalidFileException) as exc:
+            raise WorkerRequestError(
+                "invalid_workbook", f"{label}不是有效的 Excel 工作簿"
+            ) from exc
+        except PermissionError as exc:
+            raise WorkerRequestError(
+                "file_unavailable", f"无法访问{label}，文件可能正被其他程序占用"
+            ) from exc
+        return {
+            "kind": kind,
+            "source_path": str(input_path),
+            "filename": input_path.name,
+            "employee_count": len(employees),
+            "report_start": report_start,
+            "report_end": report_end,
         }
 
     if method == "generate":

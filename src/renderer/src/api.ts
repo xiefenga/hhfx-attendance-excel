@@ -1,7 +1,8 @@
 import type {
   DesktopSelection,
   GenerateResponse,
-  ParseResponse
+  ParseResponse,
+  ValidateResponse
 } from "../../shared/ipc-contract";
 
 function desktopApi() {
@@ -19,6 +20,13 @@ export async function parseWorkbook(
   monthlyPath: string
 ): Promise<ParseResponse> {
   return desktopApi().parse(inputPath, monthlyPath);
+}
+
+export async function validateWorkbook(
+  kind: "punch" | "monthly",
+  inputPath: string
+): Promise<ValidateResponse> {
+  return desktopApi().validate(kind, inputPath);
 }
 
 export async function generateSummary(

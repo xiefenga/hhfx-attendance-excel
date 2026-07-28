@@ -213,6 +213,13 @@ function registerIpc(): void {
       : await dialog.showSaveDialog(options);
     return result.canceled ? null : result.filePath;
   });
+  ipcMain.handle(
+    "attendance:validate",
+    async (_event, kind: "punch" | "monthly", inputPath: string) => {
+      await ensureWorker();
+      return requestWorker("validate", { kind, input_path: inputPath });
+    }
+  );
   ipcMain.handle("attendance:parse", async (_event, inputPath: string, monthlyPath: string) => {
     await ensureWorker();
     return requestWorker("parse", { input_path: inputPath, monthly_path: monthlyPath });
