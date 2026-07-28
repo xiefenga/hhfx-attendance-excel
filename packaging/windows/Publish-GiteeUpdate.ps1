@@ -86,20 +86,33 @@ function Publish-ReleaseAsset {
         }
     }
 
-    return Invoke-RestMethod `
-        -Uri $assetsEndpoint `
-        -Method Post `
-        -Form @{
-            access_token = $accessToken
-            file = $File
+    for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Uri $assetsEndpoint `
+                -Method Post `
+                -TimeoutSec 600 `
+                -Form @{
+                    access_token = $accessToken
+                    file = $File
+                }
+        } catch {
+            if ($attempt -eq 3) {
+                throw
+            }
+            Write-Warning (
+                "Upload attempt $attempt failed for $($File.Name); retrying."
+            )
+            Start-Sleep -Seconds 5
         }
+    }
 }
 
 $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version"
 New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
 Get-ChildItem -LiteralPath $partsDirectory -File | Remove-Item -Force
 
-$chunkSize = 80000000
+$chunkSize = 20000000
 $inputStream = [IO.File]::OpenRead($setupFile.FullName)
 $partFiles = [Collections.Generic.List[IO.FileInfo]]::new()
 try {
