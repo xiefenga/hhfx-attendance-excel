@@ -78,6 +78,36 @@ def test_monthly_half_day_status_uses_official_period_overlap() -> None:
     assert derive_half_day_statuses("外勤\n(-,-)", current, "工作日") == ("√", "√")
 
 
+def test_monthly_half_day_status_marks_non_workdays() -> None:
+    current = date(2026, 6, 14)
+
+    for day_type in ("周六", "周日", "周末", "端午节"):
+        assert derive_half_day_statuses("休息\n(-,-)", current, day_type) == (
+            "√",
+            "√",
+        )
+
+
+def test_half_day_status_prefers_actual_punches_over_monthly_label() -> None:
+    current = date(2026, 7, 1)
+
+    assert derive_half_day_statuses(
+        "出差06-16 08:30到07-23 13:15 37.5天\n(-)",
+        current,
+        "工作日",
+        [],
+    ) == ("异常", "异常")
+    assert derive_half_day_statuses(
+        "正常\n(08:30,18:00)",
+        current,
+        "工作日",
+        [
+            datetime.combine(current, time(8, 30)),
+            datetime.combine(current, time(18, 0)),
+        ],
+    ) == ("√", "√")
+
+
 def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
     punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
 
@@ -100,7 +130,41 @@ def test_dual_sources_generate_four_sheet_summary(tmp_path: Path) -> None:
     assert summary["F5"].value == 8
     assert summary["O5"].value == "√"
     assert summary["O6"].value == "√"
-    assert summary["P5"].value is None
+    assert summary["P5"].value == "√"
+    assert summary["P6"].value == "√"
+    assert summary["Q5"].value == "√"
+    assert summary["Q6"].value == "√"
+    workbook.close()
+
+
+def test_generated_summary_uses_punch_sheet_for_daily_status(tmp_path: Path) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch.active.cell(row=5, column=7).value = None
+    punch.save(punch_path)
+    punch.close()
+
+    monthly = load_workbook(monthly_path)
+    monthly.active.cell(
+        row=5,
+        column=37,
+        value="出差05-20 08:30到06-02 18:00 14天\n(-)",
+    )
+    monthly.save(monthly_path)
+    monthly.close()
+
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        monthly_file=monthly_path,
+        output_filename="打卡优先.xlsx",
+    )
+    workbook = load_workbook(result.output_path, data_only=True)
+    summary = workbook["汇总表"]
+
+    assert summary["O5"].value == "异常"
+    assert summary["O6"].value == "异常"
     workbook.close()
 
 
@@ -190,6 +254,36 @@ def test_workday_late_boundary_uses_0830() -> None:
     assert is_late_for_workday(
         [datetime.combine(base_date, time(8, 31))], base_date
     )
+
+
+def test_workday_0830_minute_is_normal_through_workbook_processing(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "08点30分边界.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "打卡时间 2026-06-10 至 2026-06-10"
+    sheet.cell(row=4, column=7, value="10")
+    for col, value in {
+        1: "边界员工",
+        3: "测试部门",
+        4: "001",
+        6: "U001",
+        7: "08:30:59 21:00",
+    }.items():
+        sheet.cell(row=5, column=col, value=value)
+    workbook.save(source_path)
+    workbook.close()
+
+    result = generate_summary(source_path, tmp_path, output_filename="边界结果.xlsx")
+    boundary_row = next(
+        row
+        for row in result.detail_rows
+        if row.name == "边界员工" and row.work_date == date(2026, 6, 10)
+    )
+
+    assert boundary_row.raw_punches.startswith("6月10日 08:30")
+    assert not boundary_row.late
 
 
 def test_workday_overtime_values_are_only_two_or_four() -> None:
@@ -287,6 +381,17 @@ def test_previous_day_incomplete_means_only_one_punch() -> None:
             {date(2026, 6, 11): [time(8, 25), time(21, 14)], date(2026, 6, 12): [time(6, 37)]},
         )
         == date(2026, 6, 12)
+    )
+    assert (
+        assign_punch_base_date(
+            date(2026, 6, 12),
+            time(6, 37),
+            {
+                date(2026, 6, 11): [time(8, 20), time(21, 14)],
+                date(2026, 6, 12): [time(6, 37), time(8, 30), time(18, 0)],
+            },
+        )
+        == date(2026, 6, 11)
     )
 
 

@@ -29,7 +29,6 @@ LEAVE_PATTERN = re.compile(
     rf"到(\d{{2}})-(\d{{2}})\s+(\d{{2}}:\d{{2}})"
 )
 PUNCH_RESULT_PATTERN = re.compile(r"\(([^()]*)\)\s*$")
-WEEKEND_TYPES = {"周六", "周日", "周末"}
 ANOMALY_STATUSES = {"迟到", "缺卡", "早退", "旷工", "异常"}
 
 
@@ -227,9 +226,10 @@ def derive_half_day_statuses(
     raw_result: str,
     current_date: date,
     day_type: str,
+    actual_punches: list[datetime] | None = None,
 ) -> tuple[str, str]:
     if day_type != "工作日":
-        return "", ""
+        return "√", "√"
 
     intervals = parse_leave_intervals(raw_result, current_date)
     morning_leave = leave_status_for_period(
@@ -242,6 +242,28 @@ def derive_half_day_statuses(
         datetime.combine(current_date, time(13, 30)),
         datetime.combine(current_date, time(18, 0)),
     )
+
+    if actual_punches is not None:
+        same_day_punches = [
+            punch for punch in actual_punches if punch.date() == current_date
+        ]
+        if not actual_punches:
+            morning = "异常"
+            afternoon = "异常"
+        elif len(actual_punches) == 1:
+            morning = "旷工"
+            afternoon = "旷工"
+        else:
+            morning = (
+                "迟到"
+                if not same_day_punches
+                or min(same_day_punches).time() > time(8, 30)
+                else "√"
+            )
+            afternoon = "√"
+            if "早退" in raw_result:
+                afternoon = "早退"
+        return morning_leave or morning, afternoon_leave or afternoon
 
     first_present, last_present = parse_result_punches(raw_result)
     if "旷工" in raw_result and "旷工迟到" not in raw_result:
@@ -401,8 +423,16 @@ def write_attendance_summary_sheet(
             day_type = day_type_for_header(date_headers.get(current_date))
             if employee.has_monthly_source:
                 raw_result = employee.daily_results.get(current_date, "")
+                daily_punches = computed.get("daily_punches")
                 morning, afternoon = derive_half_day_statuses(
-                    raw_result, current_date, day_type
+                    raw_result,
+                    current_date,
+                    day_type,
+                    (
+                        daily_punches.get(current_date, [])
+                        if isinstance(daily_punches, dict)
+                        else None
+                    ),
                 )
             else:
                 morning, afternoon = "", ""

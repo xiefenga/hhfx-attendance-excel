@@ -347,7 +347,7 @@ def is_late_for_workday(punches: list[datetime], base_date: date) -> bool:
 
 
 def has_normal_start_punch(punches: list[time]) -> bool:
-    return any(OVERNIGHT_CUTOFF <= punch < WORK_START_TIME for punch in punches)
+    return any(OVERNIGHT_CUTOFF <= punch <= WORK_START_TIME for punch in punches)
 
 
 def has_non_early_punch(punches: list[time]) -> bool:
@@ -448,6 +448,7 @@ def generate_summary(
     detail_rows: list[DetailRow] = []
     person_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
     punch_key_by_user_id: dict[str, tuple[str, str, str]] = {}
+    daily_punches_by_user_id: dict[str, dict[date, list[datetime]]] = {}
     people_identity_keys: set[tuple[str, str]] = set()
 
     for row in range(5, ws.max_row + 1):
@@ -504,6 +505,12 @@ def generate_summary(
                     assigned[base_date]["punches"].append(
                         (punch_dt, f"{fmt_date(actual_date)} {punch_time:%H:%M}")
                     )
+
+        if user_id:
+            daily_punches_by_user_id[user_id] = {
+                current_date: sorted(item[0] for item in day_data["punches"])
+                for current_date, day_data in assigned.items()
+            }
 
         for current_date in report_dates:
             day_data = assigned.get(current_date)
@@ -603,6 +610,7 @@ def generate_summary(
             "meal_count": summary["meal_count"],
             "meal_amount": int(summary["meal_count"])
             * MEAL_ALLOWANCE_AMOUNT,
+            "daily_punches": daily_punches_by_user_id.get(user_id, {}),
         }
     summary_monthly = monthly
     if monthly is not None:
