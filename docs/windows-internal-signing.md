@@ -94,13 +94,15 @@ Attendance-Ledger-Windows-x64/
     ├── Install-AttendanceLedger.ps1
     ├── attendance-ledger.cer
     ├── attendance-ledger.cer.thumbprint.txt
+    ├── attendance-ledger.version.txt
     └── Attendance Ledger Setup.exe
 ```
 
-根目录只有一个安装入口和一个文件夹；文件夹内保留原有 5 个发布文件。生成脚本会检查
-归档内 6 个文件的精确路径和数量。ZIP 只包含公钥证书，不包含 PFX 或私钥。
+根目录只有一个安装入口和一个文件夹；文件夹内包含 6 个发布文件。生成脚本会检查
+归档内 7 个文件的精确路径和数量。版本文件用于区分首次安装、同版本重复执行、升级和
+降级。ZIP 只包含公钥证书，不包含 PFX 或私钥。
 
-## 五、在目标电脑安装
+## 五、在目标电脑首次安装
 
 1. 通过 U 盘或可信的公司内部共享目录复制 ZIP，并完整解压到任意位置。
 2. 双击 `Install Attendance Ledger.cmd`。
@@ -108,9 +110,28 @@ Attendance-Ledger-Windows-x64/
 4. 脚本检查证书用途和指纹，将证书加入本机信任，并验证安装器确实由该证书签名。
 5. 验证通过后自动启动 Squirrel 安装程序。
 
-以后继续使用同一个 PFX 签名升级版本时，不需要重复安装证书。
+## 六、手动升级
 
-## 移除内部信任
+升级版本必须使用相同的 Squirrel 应用标识，并把应用版本号提升，例如从 `0.1.3` 提升到
+`0.1.4`。Release 工作流会使用 `v*` 标签作为安装包版本：
+
+```bash
+git tag v0.1.4
+git push origin v0.1.4
+```
+
+在目标电脑下载并完整解压新版本 ZIP，再次双击 `Install Attendance Ledger.cmd`：
+
+- 未找到现有版本时执行首次安装；
+- 新版本高于现有版本时执行覆盖升级；
+- 新旧版本相同时提示已经安装并退出；
+- 新版本低于现有版本时拒绝降级；
+- 使用同一签名证书且证书仍在两个本机信任存储中时，不重复导入证书，也不请求管理员权限；
+- 证书缺失或轮换时，才请求管理员权限并部署新证书。
+
+当前不使用 Electron `autoUpdater`，因此升级仍需要人工下载新 ZIP 并运行安装入口。
+
+## 七、移除内部信任
 
 如果目标电脑不再使用该应用，以管理员身份打开 PowerShell，将指纹替换为实际值：
 

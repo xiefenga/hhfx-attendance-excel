@@ -75,15 +75,12 @@ npm run make
 
 构建依次执行 TypeScript 类型检查、electron-vite 生产编译、PyInstaller sidecar 打包和 Electron Forge 制品生成。安装包位于 `out/make/`。
 
-PyInstaller 和 Electron 原生制品不能可靠地跨系统构建，因此 Windows 包在 Windows runner 上生成，macOS 包在 macOS runner 上生成。
+PyInstaller 和 Electron 原生制品不能可靠地跨系统构建，因此 Windows 包必须在 Windows
+环境生成；如需本地 macOS 包，应在 macOS 环境单独执行上述命令。
 
 ## GitHub Actions Release
 
-`.github/workflows/release-desktop.yml` 构建以下平台：
-
-- macOS Apple Silicon（arm64）
-- macOS Intel（x64）
-- Windows x64
+`.github/workflows/release-desktop.yml` 只构建 Windows x64。
 
 手动运行工作流只生成 Actions artifacts；推送 `v*` 标签时还会创建 GitHub Release：
 
@@ -93,10 +90,9 @@ git push origin v0.1.0
 ```
 
 Windows x64 的 Actions artifact 和 GitHub Release 只包含
-`Attendance-Ledger-Windows-x64.zip`；解压后双击根目录的安装脚本即可依次安装证书和应用。
-macOS 制品保持 Electron Forge 的原始输出。
+`Attendance-Ledger-Windows-x64.zip`；解压后双击根目录的安装脚本即可首次安装或升级应用。
 
-未提供正式证书时，macOS 使用 ad-hoc 签名，Windows 不签名。正式签名使用工作流中声明的 macOS/Windows 仓库 Secrets。
+Windows 正式签名使用工作流中声明的 Windows 仓库 Secrets。
 
 仅在少量受控 Windows 电脑内部使用时，可以免费使用自签名证书。证书生成、完整签名、
 安装目录整理和目标电脑一键安装流程见

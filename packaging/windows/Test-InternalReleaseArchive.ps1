@@ -21,6 +21,7 @@ $expectedFiles = @(
     "$PayloadDirectoryName/Install-AttendanceLedger.ps1"
     "$PayloadDirectoryName/attendance-ledger.cer"
     "$PayloadDirectoryName/attendance-ledger.cer.thumbprint.txt"
+    "$PayloadDirectoryName/attendance-ledger.version.txt"
 )
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -32,6 +33,18 @@ try {
             ForEach-Object { $_.FullName.Replace("\", "/") } |
             Sort-Object
     )
+    $versionEntryPath = "$PayloadDirectoryName/attendance-ledger.version.txt"
+    $versionEntry = $archive.GetEntry($versionEntryPath)
+    $applicationVersionText = ""
+    if ($null -ne $versionEntry) {
+        $reader = [IO.StreamReader]::new($versionEntry.Open())
+        try {
+            $applicationVersionText = $reader.ReadToEnd().Trim()
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
 }
 finally {
     $archive.Dispose()
@@ -52,7 +65,18 @@ $actualListing
 "@
 }
 
+[Version]$applicationVersion = $null
+if (
+    -not [Version]::TryParse(
+        $applicationVersionText,
+        [ref]$applicationVersion
+    )
+) {
+    throw "Invalid application version in release archive: $applicationVersionText"
+}
+
 Write-Host "Verified release archive ($($actualFiles.Count) files):" -ForegroundColor Green
+Write-Host "Application version: $applicationVersion"
 foreach ($file in $actualFiles) {
     Write-Host "  $file"
 }

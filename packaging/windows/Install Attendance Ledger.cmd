@@ -16,10 +16,10 @@ if not exist "%INSTALL_SCRIPT%" (
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%INSTALL_SCRIPT%"
 if errorlevel 1 (
   echo.
-  echo Installation failed. Review the error above.
+  echo Installation or update failed. Review the error above.
   pause
   exit /b 1
 )
 echo.
-echo Installation completed.
+echo Installation or update completed.
 pause

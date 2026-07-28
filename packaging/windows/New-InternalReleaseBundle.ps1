@@ -8,6 +8,7 @@ param(
         Join-Path (Get-Location) "Attendance-Ledger-Windows-x64.zip"
     ),
     [string]$PayloadDirectoryName = "Attendance Ledger Files",
+    [string]$ApplicationVersion = "",
     [switch]$AllowUntrustedSelfSigned
 )
 
@@ -55,6 +56,25 @@ if (Test-Path -LiteralPath $resolvedArchivePath) {
     throw "Archive target already exists: $resolvedArchivePath"
 }
 
+$scriptDirectory = $PSScriptRoot
+if (-not $ApplicationVersion) {
+    $packageJsonPath = [IO.Path]::GetFullPath(
+        (Join-Path $scriptDirectory "../../package.json")
+    )
+    if (-not (Test-Path -LiteralPath $packageJsonPath -PathType Leaf)) {
+        throw "Unable to find package.json for application version: $packageJsonPath"
+    }
+    $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw | ConvertFrom-Json
+    $ApplicationVersion = [string]$packageJson.version
+}
+[Version]$parsedApplicationVersion = $null
+if (
+    [string]::IsNullOrWhiteSpace($ApplicationVersion) -or
+    -not [Version]::TryParse($ApplicationVersion, [ref]$parsedApplicationVersion)
+) {
+    throw "ApplicationVersion must be a numeric version such as 0.1.4."
+}
+
 $archiveDirectory = Split-Path -Parent $resolvedArchivePath
 New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null
 
@@ -63,7 +83,6 @@ $stagingRoot = Join-Path `
     ("attendance-ledger-release-" + [Guid]::NewGuid().ToString("N"))
 $payloadDirectory = Join-Path $stagingRoot $PayloadDirectoryName
 
-$scriptDirectory = $PSScriptRoot
 $entryPointPath = Join-Path $scriptDirectory "Install Attendance Ledger.cmd"
 $installerScriptPath = Join-Path $scriptDirectory "Install-AttendanceLedger.ps1"
 foreach ($path in @($entryPointPath, $installerScriptPath)) {
@@ -85,6 +104,10 @@ try {
     Set-Content `
         -LiteralPath (Join-Path $payloadDirectory "attendance-ledger.cer.thumbprint.txt") `
         -Value $certificate.Thumbprint `
+        -Encoding Ascii
+    Set-Content `
+        -LiteralPath (Join-Path $payloadDirectory "attendance-ledger.version.txt") `
+        -Value $parsedApplicationVersion.ToString() `
         -Encoding Ascii
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
