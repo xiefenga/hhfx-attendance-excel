@@ -1,7 +1,7 @@
 {
   "name": "attendance-ledger",
   "productName": "Attendance Ledger",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "离线考勤 Excel 解析与汇总工具",
   "author": "Attendance Ledger",
   "license": "UNLICENSED",
