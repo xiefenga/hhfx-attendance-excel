@@ -30,6 +30,7 @@ LEAVE_PATTERN = re.compile(
 )
 PUNCH_RESULT_PATTERN = re.compile(r"\(([^()]*)\)\s*$")
 ANOMALY_STATUSES = {"迟到", "缺卡", "早退", "旷工", "异常"}
+EMPLOYMENT_STATUSES = {"未入职", "已离职"}
 
 
 @dataclass
@@ -304,6 +305,46 @@ def value_or_blank(value: float) -> float | str:
     return rounded if rounded else ""
 
 
+def employment_status_notes(
+    statuses: dict[date, str], display_dates: list[date]
+) -> list[str]:
+    notes: list[str] = []
+    range_start: date | None = None
+    previous_date: date | None = None
+    previous_status: str | None = None
+
+    def append_note(start: date, end: date, status: str) -> None:
+        if start == end:
+            notes.append(f"{start.month}/{start.day}{status}")
+        else:
+            notes.append(
+                f"{start.month}/{start.day}–{end.month}/{end.day}{status}"
+            )
+
+    for current_date in display_dates:
+        status = statuses.get(current_date)
+        if status == previous_status and status is not None:
+            previous_date = current_date
+            continue
+        if (
+            range_start is not None
+            and previous_date is not None
+            and previous_status is not None
+        ):
+            append_note(range_start, previous_date, previous_status)
+        range_start = current_date if status is not None else None
+        previous_date = current_date if status is not None else None
+        previous_status = status
+
+    if (
+        range_start is not None
+        and previous_date is not None
+        and previous_status is not None
+    ):
+        append_note(range_start, previous_date, previous_status)
+    return notes
+
+
 def write_attendance_summary_sheet(
     wb: Workbook,
     monthly: MonthlyWorkbook,
@@ -367,7 +408,9 @@ def write_attendance_summary_sheet(
     normal_font = Font(name="宋体", size=9)
     anomaly_font = Font(name="宋体", size=9, bold=True, color="C00000")
     leave_font = Font(name="宋体", size=9, color="1F4E78")
+    employment_font = Font(name="宋体", size=9, color="666666")
     status_fill = PatternFill("solid", fgColor="FCE4D6")
+    employment_fill = PatternFill("solid", fgColor="E7E6E6")
 
     for index, employee in enumerate(monthly.employees, start=1):
         morning_row = 5 + (index - 1) * 2
@@ -419,9 +462,18 @@ def write_attendance_summary_sheet(
         ws.cell(row=afternoon_row, column=14, value="下午")
 
         anomaly_notes: list[str] = []
+        daily_employment_statuses = computed.get("daily_employment_statuses")
+        employment_statuses = (
+            daily_employment_statuses
+            if isinstance(daily_employment_statuses, dict)
+            else {}
+        )
         for col, current_date in enumerate(display_dates, start=date_start_col):
             day_type = day_type_for_header(date_headers.get(current_date))
-            if employee.has_monthly_source:
+            employment_status = employment_statuses.get(current_date)
+            if employment_status in EMPLOYMENT_STATUSES:
+                morning, afternoon = employment_status, employment_status
+            elif employee.has_monthly_source:
                 raw_result = employee.daily_results.get(current_date, "")
                 daily_punches = computed.get("daily_punches")
                 morning, afternoon = derive_half_day_statuses(
@@ -442,7 +494,10 @@ def write_attendance_summary_sheet(
             ):
                 cell = ws.cell(row=row, column=col, value=status)
                 cell.font = normal_font
-                if status in ANOMALY_STATUSES:
+                if status in EMPLOYMENT_STATUSES:
+                    cell.font = employment_font
+                    cell.fill = employment_fill
+                elif status in ANOMALY_STATUSES:
                     cell.font = anomaly_font
                     cell.fill = status_fill
                     anomaly_notes.append(f"{current_date.month}/{current_date.day}{period}{status}")
@@ -450,7 +505,7 @@ def write_attendance_summary_sheet(
                     cell.font = leave_font
         meal_count = int(computed.get("meal_count", 0))
         meal_amount = int(computed.get("meal_amount", 0))
-        remarks: list[str] = []
+        remarks = employment_status_notes(employment_statuses, display_dates)
         if meal_count:
             remarks.append(f"餐补{meal_count}次/{meal_amount}元")
         remarks.extend(anomaly_notes)

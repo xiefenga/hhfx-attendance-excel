@@ -42,6 +42,7 @@ WEEKEND_HEADER_LABELS = {
     "周末": "周末",
 }
 WEEKEND_DAY_TYPES = set(WEEKEND_HEADER_LABELS.values())
+EMPLOYMENT_MARKERS = ("未入职", "已离职")
 
 
 def parse_time_at(
@@ -150,6 +151,67 @@ def get_day_type(current_date: date, header: object) -> str:
     return "工作日"
 
 
+def employment_statuses_for_row(
+    ws: Any,
+    row: int,
+    source_date_columns: list[tuple[int, date, object]],
+    employee_name: str,
+) -> dict[date, str]:
+    marker_dates: dict[str, list[date]] = {
+        marker: [] for marker in EMPLOYMENT_MARKERS
+    }
+    raw_values: dict[date, object] = {}
+    for col, current_date, _header in source_date_columns:
+        raw_value = ws.cell(row=row, column=col).value
+        raw_values[current_date] = raw_value
+        marker_text = str(raw_value or "").strip()
+        contained_markers = [
+            marker for marker in EMPLOYMENT_MARKERS if marker in marker_text
+        ]
+        if not contained_markers:
+            continue
+        if marker_text not in EMPLOYMENT_MARKERS:
+            raise ValueError(
+                f"打卡时间表中员工“{employee_name}”的"
+                f"{current_date.month}月{current_date.day}日在职标记必须单独填写"
+            )
+        marker_dates[marker_text].append(current_date)
+
+    for marker, dates in marker_dates.items():
+        if len(dates) > 1:
+            raise ValueError(
+                f"打卡时间表中员工“{employee_name}”存在多个“{marker}”标记"
+            )
+
+    not_hired_through = next(iter(marker_dates["未入职"]), None)
+    departed_from = next(iter(marker_dates["已离职"]), None)
+    if (
+        not_hired_through is not None
+        and departed_from is not None
+        and not_hired_through >= departed_from
+    ):
+        raise ValueError(
+            f"打卡时间表中员工“{employee_name}”的“未入职”标记"
+            "必须早于“已离职”标记"
+        )
+
+    statuses: dict[date, str] = {}
+    for _col, current_date, _header in source_date_columns:
+        if not_hired_through is not None and current_date <= not_hired_through:
+            statuses[current_date] = "未入职"
+        elif departed_from is not None and current_date >= departed_from:
+            statuses[current_date] = "已离职"
+
+    for current_date, status in statuses.items():
+        if extract_times(raw_values[current_date]):
+            raise ValueError(
+                f"打卡时间表中员工“{employee_name}”的"
+                f"{current_date.month}月{current_date.day}日已标记为“{status}”，"
+                "但仍存在打卡时间"
+            )
+    return statuses
+
+
 def parse_workbook(input_file: Path) -> ParsedWorkbook:
     source = load_workbook(input_file, data_only=True)
     ws = source.active
@@ -166,10 +228,12 @@ def parse_workbook(input_file: Path) -> ParsedWorkbook:
     holidays: list[ParsedHoliday] = []
     weekend_dates: list[date] = []
     non_workdays: list[ParsedNonWorkday] = []
+    source_date_columns: list[tuple[int, date, object]] = []
     date_count = expected_date_count
     for offset, col in enumerate(range(7, 7 + expected_date_count)):
         current_date = report_start + timedelta(days=offset)
         header = ws.cell(row=4, column=col).value
+        source_date_columns.append((col, current_date, header))
         day_type = get_day_type(current_date, header)
         if day_type in WEEKEND_DAY_TYPES:
             weekend_dates.append(current_date)
@@ -179,9 +243,20 @@ def parse_workbook(input_file: Path) -> ParsedWorkbook:
             non_workdays.append(ParsedNonWorkday(date=current_date, label=day_type))
 
     employee_count = 0
-    for row in range(5, ws.max_row + 1):
-        if ws.cell(row=row, column=1).value:
-            employee_count += 1
+    try:
+        for row in range(5, ws.max_row + 1):
+            raw_name = ws.cell(row=row, column=1).value
+            if raw_name:
+                employee_count += 1
+                employment_statuses_for_row(
+                    ws,
+                    row,
+                    source_date_columns,
+                    str(raw_name).strip(),
+                )
+    except Exception:
+        source.close()
+        raise
 
     source.close()
     return ParsedWorkbook(
@@ -449,6 +524,7 @@ def generate_summary(
     person_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
     punch_key_by_user_id: dict[str, tuple[str, str, str]] = {}
     daily_punches_by_user_id: dict[str, dict[date, list[datetime]]] = {}
+    daily_employment_statuses_by_user_id: dict[str, dict[date, str]] = {}
     people_identity_keys: set[tuple[str, str]] = set()
 
     for row in range(5, ws.max_row + 1):
@@ -479,6 +555,18 @@ def generate_summary(
                 "meal_count": 0,
             },
         )
+        try:
+            employment_statuses = employment_statuses_for_row(
+                ws,
+                row,
+                source_date_columns,
+                name,
+            )
+        except Exception:
+            source.close()
+            raise
+        if user_id:
+            daily_employment_statuses_by_user_id[user_id] = employment_statuses
 
         natural_day_times: dict[date, list[time]] = defaultdict(list)
         raw_cells: list[tuple[date, list[tuple[date, time]]]] = []
@@ -611,6 +699,9 @@ def generate_summary(
             "meal_amount": int(summary["meal_count"])
             * MEAL_ALLOWANCE_AMOUNT,
             "daily_punches": daily_punches_by_user_id.get(user_id, {}),
+            "daily_employment_statuses": daily_employment_statuses_by_user_id.get(
+                user_id, {}
+            ),
         }
     summary_monthly = monthly
     if monthly is not None:
@@ -798,6 +889,11 @@ def write_workbook(
         ["迟到", "工作日当天第一条凌晨打卡截止及之后的打卡晚于上班时间，标记迟到；周末/节假日不判迟到"],
         ["凌晨打卡截止", "次日凌晨打卡截止前打卡是跨天加班的打卡约束"],
         ["旷工", "工作日只有一个打卡时间视为旷工；周末/节假日只有一个打卡时间不视为旷工"],
+        [
+            "在职边界",
+            "打卡表中“未入职”标记所在日期及之前不计考勤；"
+            "“已离职”标记所在日期及之后不计考勤",
+        ],
     ]
     for rule_row in rules:
         rules_ws.append(rule_row)

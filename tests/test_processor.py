@@ -168,6 +168,115 @@ def test_generated_summary_uses_punch_sheet_for_daily_status(tmp_path: Path) -> 
     workbook.close()
 
 
+def test_employment_boundary_markers_expand_into_daily_statuses(
+    tmp_path: Path,
+) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch_ws = punch.active
+    punch_ws.cell(row=5, column=7, value="未入职")
+    punch_ws.cell(row=5, column=9, value="已离职")
+    punch.save(punch_path)
+    punch.close()
+
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        monthly_file=monthly_path,
+        output_filename="在职边界.xlsx",
+    )
+    workbook = load_workbook(result.output_path, data_only=True)
+    summary = workbook["汇总表"]
+
+    assert summary["O5"].value == "未入职"
+    assert summary["O6"].value == "未入职"
+    assert summary["P5"].value == "√"
+    assert summary["P6"].value == "√"
+    assert summary["Q5"].value == "已离职"
+    assert summary["Q6"].value == "已离职"
+    assert summary.cell(row=5, column=summary.max_column - 1).value == (
+        "6/1未入职；6/3已离职；餐补1次/30元"
+    )
+    assert result.stats.total_overtime_hours == 8
+    assert result.stats.total_holiday_overtime_days == 0
+    assert result.stats.meal_records == 1
+    workbook.close()
+
+
+def test_last_day_not_hired_marker_covers_entire_report(tmp_path: Path) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch_ws = punch.active
+    punch_ws.cell(row=5, column=7).value = None
+    punch_ws.cell(row=5, column=8).value = None
+    punch_ws.cell(row=5, column=9, value="未入职")
+    punch.save(punch_path)
+    punch.close()
+
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        monthly_file=monthly_path,
+        output_filename="整月未入职.xlsx",
+    )
+    workbook = load_workbook(result.output_path, data_only=True)
+    summary = workbook["汇总表"]
+
+    for coordinate in ("O5", "O6", "P5", "P6", "Q5", "Q6"):
+        assert summary[coordinate].value == "未入职"
+    assert summary.cell(row=5, column=summary.max_column - 1).value == (
+        "6/1–6/3未入职"
+    )
+    assert result.stats.overtime_records == 0
+    assert result.stats.absence_records == 0
+    assert result.stats.late_records == 0
+    assert result.stats.meal_records == 0
+    workbook.close()
+
+
+def test_employment_marker_rejects_punches_inside_inactive_period(
+    tmp_path: Path,
+) -> None:
+    punch_path, _monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch.active.cell(row=5, column=8, value="未入职")
+    punch.save(punch_path)
+    punch.close()
+
+    with pytest.raises(ValueError, match="已标记为“未入职”，但仍存在打卡时间"):
+        parse_workbook(punch_path)
+
+
+def test_employment_markers_require_valid_order(tmp_path: Path) -> None:
+    punch_path, _monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch_ws = punch.active
+    punch_ws.cell(row=5, column=7, value="已离职")
+    punch_ws.cell(row=5, column=8, value="未入职")
+    punch_ws.cell(row=5, column=9).value = None
+    punch.save(punch_path)
+    punch.close()
+
+    with pytest.raises(ValueError, match="“未入职”标记必须早于“已离职”标记"):
+        parse_workbook(punch_path)
+
+
+def test_employment_marker_must_be_the_only_cell_content(tmp_path: Path) -> None:
+    punch_path, _monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch.active.cell(row=5, column=7, value="未入职 08:20")
+    punch.save(punch_path)
+    punch.close()
+
+    with pytest.raises(ValueError, match="在职标记必须单独填写"):
+        parse_workbook(punch_path)
+
+
 def test_single_source_employees_keep_available_information(tmp_path: Path) -> None:
     punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
 
