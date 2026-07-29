@@ -210,10 +210,22 @@ function Clear-ReleaseAssets {
     foreach ($asset in @(Get-ReleaseAssets -ReleaseId $ReleaseId)) {
         $assetId = Get-ObjectProperty -InputObject $asset -Name "id"
         if ($null -ne $assetId) {
+            $deleteStatusCode = 0
             Invoke-RestMethod `
                 -Uri "$apiBase/releases/$ReleaseId/attach_files/${assetId}?access_token=$escapedToken" `
                 -Method Delete `
+                -SkipHttpErrorCheck `
+                -StatusCodeVariable deleteStatusCode `
                 -TimeoutSec 180 | Out-Null
+            if (
+                $deleteStatusCode -ne 404 -and
+                ($deleteStatusCode -lt 200 -or $deleteStatusCode -ge 300)
+            ) {
+                throw (
+                    "Deleting Gitee release attachment $assetId failed " +
+                    "with HTTP $deleteStatusCode."
+                )
+            }
         }
     }
 }
@@ -281,10 +293,18 @@ function Remove-OtherReleases {
         }
         $tagName = [string](Get-ObjectProperty -InputObject $release -Name "tag_name")
         Write-Host "Deleting old Gitee release $tagName (id=$releaseId)..."
+        $deleteStatusCode = 0
         Invoke-RestMethod `
             -Uri "$apiBase/releases/${releaseId}?access_token=$escapedToken" `
             -Method Delete `
+            -SkipHttpErrorCheck `
+            -StatusCodeVariable deleteStatusCode `
             -TimeoutSec 180 | Out-Null
+        if ($deleteStatusCode -eq 404) {
+            Write-Host "Old Gitee release $tagName is already absent."
+        } elseif ($deleteStatusCode -lt 200 -or $deleteStatusCode -ge 300) {
+            throw "Deleting Gitee release $tagName failed with HTTP $deleteStatusCode."
+        }
     }
 }
 
