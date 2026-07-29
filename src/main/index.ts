@@ -204,6 +204,9 @@ async function createWindow(): Promise<void> {
 
 function registerIpc(): void {
   ipcMain.handle("attendance:hello", async () => ensureWorker());
+  ipcMain.handle("attendance:check-for-updates", async () => {
+    await checkForUpdates(true);
+  });
   ipcMain.handle("attendance:select-input", async (_event, kind: "punch" | "monthly") => {
     const options: Electron.OpenDialogOptions = {
       title: kind === "monthly" ? "选择钉钉月度汇总表" : "选择钉钉打卡时间表",
@@ -369,8 +372,41 @@ async function downloadUpdate(manifest: UpdateManifest): Promise<string> {
   return installerPath;
 }
 
-async function checkForUpdates(): Promise<void> {
+async function showUpdateMessageBox(
+  options: Electron.MessageBoxOptions
+): Promise<Electron.MessageBoxReturnValue> {
+  return mainWindow
+    ? dialog.showMessageBox(mainWindow, options)
+    : dialog.showMessageBox(options);
+}
+
+async function checkForUpdates(notifyWhenCurrent = false): Promise<void> {
+  if (!app.isPackaged || process.platform !== "win32") {
+    if (notifyWhenCurrent) {
+      await showUpdateMessageBox({
+        type: "info",
+        title: "无法检查更新",
+        message: "手动更新仅支持已安装的 Windows 正式版本",
+        detail: "请在 Windows 安装版中使用“检查更新”。",
+        buttons: ["知道了"],
+        defaultId: 0,
+        noLink: true
+      });
+    }
+    return;
+  }
   if (updateInProgress) {
+    if (notifyWhenCurrent) {
+      await showUpdateMessageBox({
+        type: "info",
+        title: "正在检查更新",
+        message: "更新检查或下载正在进行",
+        detail: "请稍候，不需要重复操作。",
+        buttons: ["知道了"],
+        defaultId: 0,
+        noLink: true
+      });
+    }
     return;
   }
   updateInProgress = true;
@@ -381,6 +417,17 @@ async function checkForUpdates(): Promise<void> {
       signal: AbortSignal.timeout(30_000)
     });
     if (response.status === 404) {
+      if (notifyWhenCurrent) {
+        await showUpdateMessageBox({
+          type: "info",
+          title: "暂无更新信息",
+          message: "暂时没有可用的更新信息",
+          detail: `当前版本为 v${app.getVersion()}，请稍后重试。`,
+          buttons: ["知道了"],
+          defaultId: 0,
+          noLink: true
+        });
+      }
       return;
     }
     if (!response.ok) {
@@ -391,57 +438,45 @@ async function checkForUpdates(): Promise<void> {
       throw new Error("更新清单格式无效");
     }
     if (!isNewerVersion(value.version, app.getVersion())) {
+      if (notifyWhenCurrent) {
+        await showUpdateMessageBox({
+          type: "info",
+          title: "已是最新版本",
+          message: `当前已是最新版本 v${app.getVersion()}`,
+          buttons: ["知道了"],
+          defaultId: 0,
+          noLink: true
+        });
+      }
       return;
     }
 
-    const prompt = mainWindow
-      ? await dialog.showMessageBox(mainWindow, {
-          type: "info",
-          title: "发现新版本",
-          message: `发现新版本 v${value.version}`,
-          detail: "是否现在下载更新？下载完成后可立即安装。",
-          buttons: ["下载更新", "稍后"],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true
-        })
-      : await dialog.showMessageBox({
-          type: "info",
-          title: "发现新版本",
-          message: `发现新版本 v${value.version}`,
-          detail: "是否现在下载更新？下载完成后可立即安装。",
-          buttons: ["下载更新", "稍后"],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true
-        });
+    const prompt = await showUpdateMessageBox({
+      type: "info",
+      title: "发现新版本",
+      message: `发现新版本 v${value.version}`,
+      detail: "是否现在下载更新？下载完成后可立即安装。",
+      buttons: ["下载更新", "稍后"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    });
     if (prompt.response !== 0) {
       return;
     }
 
     const installerPath = await downloadUpdate(value);
     mainWindow?.setProgressBar(-1);
-    const ready = mainWindow
-      ? await dialog.showMessageBox(mainWindow, {
-          type: "info",
-          title: "更新已下载",
-          message: `Attendance Ledger v${value.version} 已下载完成`,
-          detail: "立即退出应用并安装新版本？",
-          buttons: ["立即安装", "稍后"],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true
-        })
-      : await dialog.showMessageBox({
-          type: "info",
-          title: "更新已下载",
-          message: `Attendance Ledger v${value.version} 已下载完成`,
-          detail: "立即退出应用并安装新版本？",
-          buttons: ["立即安装", "稍后"],
-          defaultId: 0,
-          cancelId: 1,
-          noLink: true
-        });
+    const ready = await showUpdateMessageBox({
+      type: "info",
+      title: "更新已下载",
+      message: `Attendance Ledger v${value.version} 已下载完成`,
+      detail: "立即退出应用并安装新版本？",
+      buttons: ["立即安装", "稍后"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    });
     if (ready.response === 0) {
       spawn(installerPath, ["--silent"], {
         detached: true,
@@ -453,6 +488,17 @@ async function checkForUpdates(): Promise<void> {
   } catch (error) {
     mainWindow?.setProgressBar(-1);
     console.error("自动更新失败", error);
+    if (notifyWhenCurrent) {
+      await showUpdateMessageBox({
+        type: "error",
+        title: "检查更新失败",
+        message: "暂时无法检查更新",
+        detail: error instanceof Error ? error.message : "请检查网络连接后重试。",
+        buttons: ["知道了"],
+        defaultId: 0,
+        noLink: true
+      });
+    }
   } finally {
     updateInProgress = false;
   }

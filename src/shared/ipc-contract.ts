@@ -71,6 +71,7 @@ export interface DesktopSelection {
 
 export interface AttendanceDesktopApi {
   hello(): Promise<WorkerHello>;
+  checkForUpdates(): Promise<void>;
   selectInput(kind: "punch" | "monthly"): Promise<DesktopSelection | null>;
   selectOutput(defaultName: string): Promise<string | null>;
   validate(

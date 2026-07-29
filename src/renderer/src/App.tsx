@@ -7,6 +7,7 @@ import type {
   ValidateResponse
 } from "../../shared/ipc-contract";
 import {
+  checkForDesktopUpdates,
   generateSummary,
   parseWorkbook,
   revealDesktopOutput,
@@ -133,6 +134,27 @@ function FolderIcon() {
         d="M3 7h7l2 2h9v10H3V7ZM3 7V5h7l2 2"
         stroke="currentColor"
         strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function RefreshIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
@@ -354,6 +376,7 @@ export default function App() {
   const [differenceOpen, setDifferenceOpen] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
   const validationVersions = useRef<Record<FileKind, number>>({
     punch: 0,
     monthly: 0
@@ -526,6 +549,18 @@ export default function App() {
     }
   }
 
+  async function handleCheckForUpdates() {
+    if (checkingForUpdates) {
+      return;
+    }
+    setCheckingForUpdates(true);
+    try {
+      await checkForDesktopUpdates();
+    } finally {
+      setCheckingForUpdates(false);
+    }
+  }
+
   const buttonLabel =
     busy === "generating"
         ? "正在计算并生成…"
@@ -548,6 +583,15 @@ export default function App() {
         <section className="setup-view" aria-busy={isBusy}>
           <div className="intro">
             <h1>生成考勤汇总表</h1>
+            <button
+              className="secondary-button update-button"
+              type="button"
+              disabled={checkingForUpdates || isBusy}
+              onClick={() => void handleCheckForUpdates()}
+            >
+              <RefreshIcon className={checkingForUpdates ? "is-spinning" : ""} />
+              <span>{checkingForUpdates ? "正在检查…" : "检查更新"}</span>
+            </button>
           </div>
 
           <div className="file-grid">

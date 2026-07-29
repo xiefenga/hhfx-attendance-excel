@@ -106,6 +106,10 @@ main {
 
 .intro {
   margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
 }
 
 .intro h1,
@@ -433,6 +437,23 @@ main {
 
 .generate-button {
   min-width: 220px;
+}
+
+.update-button {
+  min-height: 38px;
+  padding-inline: 14px;
+  flex: 0 0 auto;
+  color: var(--foreground-muted);
+  font-size: 13px;
+}
+
+.update-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.is-spinning {
+  animation: spin 800ms linear infinite;
 }
 
 .spinner {

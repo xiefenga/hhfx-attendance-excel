@@ -9,6 +9,10 @@ function desktopApi() {
   return window.attendanceDesktop;
 }
 
+export async function checkForDesktopUpdates(): Promise<void> {
+  await desktopApi().checkForUpdates();
+}
+
 export async function selectDesktopWorkbook(
   kind: "punch" | "monthly"
 ): Promise<DesktopSelection | null> {
