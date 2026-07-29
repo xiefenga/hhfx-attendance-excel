@@ -373,7 +373,7 @@ $partsDirectory = Join-Path $env:RUNNER_TEMP "attendance-ledger-update-v$Version
 New-Item -ItemType Directory -Path $partsDirectory -Force | Out-Null
 Get-ChildItem -LiteralPath $partsDirectory -File | Remove-Item -Force
 
-$chunkSize = if ($publishToRelease) { 70MB } else { 2000000 }
+$chunkSize = if ($publishToRelease) { 20MB } else { 2000000 }
 $inputStream = [IO.File]::OpenRead($setupFile.FullName)
 $partFiles = [Collections.Generic.List[IO.FileInfo]]::new()
 try {
