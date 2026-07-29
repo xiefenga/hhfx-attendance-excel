@@ -230,7 +230,13 @@ def derive_half_day_statuses(
     actual_punches: list[datetime] | None = None,
 ) -> tuple[str, str]:
     if day_type != "工作日":
-        return "√", "√"
+        if actual_punches is not None:
+            has_punch = bool(actual_punches)
+        else:
+            first_present, last_present = parse_result_punches(raw_result)
+            has_punch = first_present or last_present
+        status = "√" if has_punch else "○"
+        return status, status
 
     intervals = parse_leave_intervals(raw_result, current_date)
     morning_leave = leave_status_for_period(

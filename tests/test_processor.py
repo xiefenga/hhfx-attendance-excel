@@ -80,12 +80,59 @@ def test_monthly_half_day_status_uses_official_period_overlap() -> None:
 
 def test_monthly_half_day_status_marks_non_workdays() -> None:
     current = date(2026, 6, 14)
+    punches = [datetime.combine(current, time(9, 0))]
 
     for day_type in ("周六", "周日", "周末", "端午节"):
         assert derive_half_day_statuses("休息\n(-,-)", current, day_type) == (
+            "○",
+            "○",
+        )
+        assert derive_half_day_statuses(
+            "休息\n(-,-)",
+            current,
+            day_type,
+            [],
+        ) == (
+            "○",
+            "○",
+        )
+        assert derive_half_day_statuses(
+            "休息\n(-,-)",
+            current,
+            day_type,
+            punches,
+        ) == (
             "√",
             "√",
         )
+
+
+def test_generated_summary_marks_non_workdays_without_punches_as_circles(
+    tmp_path: Path,
+) -> None:
+    punch_path, monthly_path = create_dual_source_workbooks(tmp_path)
+
+    punch = load_workbook(punch_path)
+    punch_ws = punch.active
+    punch_ws.cell(row=5, column=8).value = None
+    punch_ws.cell(row=5, column=9).value = None
+    punch.save(punch_path)
+    punch.close()
+
+    result = generate_summary(
+        punch_path,
+        tmp_path,
+        monthly_file=monthly_path,
+        output_filename="非工作日无打卡.xlsx",
+    )
+    workbook = load_workbook(result.output_path, data_only=True)
+    summary = workbook["汇总表"]
+
+    assert summary["O5"].value == "√"
+    assert summary["O6"].value == "√"
+    for coordinate in ("P5", "P6", "Q5", "Q6"):
+        assert summary[coordinate].value == "○"
+    workbook.close()
 
 
 def test_half_day_status_prefers_actual_punches_over_monthly_label() -> None:
