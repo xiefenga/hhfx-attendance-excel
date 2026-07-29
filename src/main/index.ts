@@ -12,8 +12,10 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_MANIFEST_URL =
   "https://gitee.com/xf_wwx/attendance-ledger-updates/raw/master/win32/x64/update.json";
-const UPDATE_ASSET_PATH_PREFIX =
+const UPDATE_RAW_ASSET_PATH_PREFIX =
   "/xf_wwx/attendance-ledger-updates/raw/master/win32/x64/parts/";
+const UPDATE_RELEASE_ASSET_PATH_PREFIX =
+  "/xf_wwx/attendance-ledger-updates/releases/download/";
 
 interface UpdatePart {
   url: string;
@@ -25,6 +27,10 @@ interface UpdateManifest {
   sha256: string;
   size: number;
   parts: UpdatePart[];
+}
+
+interface UpdateManifestDocument extends UpdateManifest {
+  release?: unknown;
 }
 
 interface WorkerResponse {
@@ -299,15 +305,28 @@ function isUpdateManifest(value: unknown): value is UpdateManifest {
     }
     try {
       const url = new URL(candidate.url);
+      const releaseAssetPrefix =
+        `${UPDATE_RELEASE_ASSET_PATH_PREFIX}v${manifest.version}/`;
       return (
         url.protocol === "https:" &&
         url.hostname === "gitee.com" &&
-        url.pathname.startsWith(UPDATE_ASSET_PATH_PREFIX)
+        (
+          url.pathname.startsWith(UPDATE_RAW_ASSET_PATH_PREFIX) ||
+          url.pathname.startsWith(releaseAssetPrefix)
+        )
       );
     } catch {
       return false;
     }
   });
+}
+
+function resolveUpdateManifest(value: unknown): UpdateManifest | null {
+  if (!isUpdateManifest(value)) {
+    return null;
+  }
+  const document = value as UpdateManifestDocument;
+  return isUpdateManifest(document.release) ? document.release : document;
 }
 
 function isNewerVersion(candidate: string, current: string): boolean {
@@ -433,8 +452,9 @@ async function checkForUpdates(notifyWhenCurrent = false): Promise<void> {
     if (!response.ok) {
       throw new Error(`更新清单请求失败：HTTP ${response.status}`);
     }
-    const value: unknown = await response.json();
-    if (!isUpdateManifest(value)) {
+    const document: unknown = await response.json();
+    const value = resolveUpdateManifest(document);
+    if (!value) {
       throw new Error("更新清单格式无效");
     }
     if (!isNewerVersion(value.version, app.getVersion())) {
