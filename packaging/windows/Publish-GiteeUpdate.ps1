@@ -442,24 +442,43 @@ if ($publishToRelease) {
     }
     $installerManifest["parts"] = $publishedParts
 
-    $assets = @(Get-ReleaseAssets -ReleaseId $releaseId)
-    if ($assets.Count -ne $partFiles.Count) {
-        throw "Gitee release attachment count verification failed."
-    }
-    foreach ($partFile in $partFiles) {
-        $matchingAssets = @(
-            $assets | Where-Object {
-                (Get-ObjectProperty -InputObject $_ -Name "name") -eq $partFile.Name
+    $assetsVerified = $false
+    $assets = @()
+    for ($verificationAttempt = 1; $verificationAttempt -le 30; $verificationAttempt += 1) {
+        $assets = @(Get-ReleaseAssets -ReleaseId $releaseId)
+        $assetsVerified = $assets.Count -eq $partFiles.Count
+        if ($assetsVerified) {
+            foreach ($partFile in $partFiles) {
+                $matchingAssets = @(
+                    $assets | Where-Object {
+                        (Get-ObjectProperty -InputObject $_ -Name "name") -eq $partFile.Name
+                    }
+                )
+                if (
+                    $matchingAssets.Count -ne 1 -or
+                    [long](Get-ObjectProperty `
+                        -InputObject $matchingAssets[0] `
+                        -Name "size") -ne $partFile.Length
+                ) {
+                    $assetsVerified = $false
+                    break
+                }
             }
-        )
-        if (
-            $matchingAssets.Count -ne 1 -or
-            [long](Get-ObjectProperty `
-                -InputObject $matchingAssets[0] `
-                -Name "size") -ne $partFile.Length
-        ) {
-            throw "Gitee release attachment verification failed for $($partFile.Name)."
         }
+        if ($assetsVerified) {
+            break
+        }
+        Write-Host (
+            "Waiting for Gitee release attachments " +
+            "($($assets.Count)/$($partFiles.Count) visible)..."
+        )
+        Start-Sleep -Seconds 5
+    }
+    if (-not $assetsVerified) {
+        throw (
+            "Gitee release attachment verification timed out: " +
+            "$($assets.Count)/$($partFiles.Count) visible."
+        )
     }
 } else {
     $partsPath = "win32/x64/parts"
