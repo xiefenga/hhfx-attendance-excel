@@ -9,10 +9,9 @@ on:
         required: true
         default: false
       keep_gitee_tag:
-        description: "清理时保留的 Gitee Release 标签"
+        description: "要保留的 Gitee Release 标签（例如 v0.1.28）"
         type: string
         required: true
-        default: "v0.1.28"
   push:
     tags:
       - "v*"
