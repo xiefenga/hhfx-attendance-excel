@@ -206,15 +206,51 @@ function Get-ReleaseAssets {
     )
 }
 
+function Get-ReleaseAsset {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ReleaseId,
+
+        [Parameter(Mandatory = $true)]
+        [long]$AssetId
+    )
+
+    $statusCode = 0
+    $result = Invoke-RestMethod `
+        -Uri "$apiBase/releases/$ReleaseId/attach_files/$AssetId" `
+        -Method Get `
+        -Headers $authorizationHeaders `
+        -SkipHttpErrorCheck `
+        -StatusCodeVariable statusCode `
+        -TimeoutSec 180
+    if ($statusCode -eq 404) {
+        return $null
+    }
+    if ($statusCode -lt 200 -or $statusCode -ge 300) {
+        throw "Gitee release attachment lookup failed with HTTP $statusCode."
+    }
+    return $result
+}
+
 function Clear-ReleaseAssets {
     param(
         [Parameter(Mandatory = $true)]
         [int]$ReleaseId
     )
 
-    foreach ($asset in @(Get-ReleaseAssets -ReleaseId $ReleaseId)) {
-        $assetId = Get-ObjectProperty -InputObject $asset -Name "id"
-        if ($null -ne $assetId) {
+    # Gitee's attachment list API can return only one item even when a release
+    # contains multiple attachments. Re-list after every deletion so rerunning
+    # the same tag still clears every previously uploaded part.
+    for ($iteration = 1; $iteration -le 1000; $iteration += 1) {
+        $assets = @(Get-ReleaseAssets -ReleaseId $ReleaseId)
+        if ($assets.Count -eq 0) {
+            return
+        }
+        foreach ($asset in $assets) {
+            $assetId = Get-ObjectProperty -InputObject $asset -Name "id"
+            if ($null -eq $assetId) {
+                throw "Gitee returned a release attachment without an id."
+            }
             $deleteStatusCode = 0
             Invoke-RestMethod `
                 -Uri "$apiBase/releases/$ReleaseId/attach_files/$assetId" `
@@ -234,6 +270,7 @@ function Clear-ReleaseAssets {
             }
         }
     }
+    throw "Gitee release attachment cleanup exceeded 1000 iterations."
 }
 
 function Publish-ReleaseAsset {
@@ -426,14 +463,24 @@ if ($publishToRelease) {
     Clear-ReleaseAssets -ReleaseId $releaseId
 
     $publishedParts = @()
+    $publishedAssets = @()
     foreach ($partFile in $partFiles) {
         Write-Host "Uploading $($partFile.Name) ($($partFile.Length) bytes)..."
         $asset = Publish-ReleaseAsset -ReleaseId $releaseId -File $partFile
+        $assetId = Get-ObjectProperty -InputObject $asset -Name "id"
         $downloadUrl = [string](
             Get-ObjectProperty -InputObject $asset -Name "browser_download_url"
         )
+        if ($null -eq $assetId) {
+            throw "Gitee did not return an attachment id for $($partFile.Name)."
+        }
         if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
             throw "Gitee did not return a download URL for $($partFile.Name)."
+        }
+        $publishedAssets += [ordered]@{
+            id = [long]$assetId
+            name = $partFile.Name
+            size = [long]$partFile.Length
         }
         $publishedParts += [ordered]@{
             url = $downloadUrl
@@ -443,41 +490,38 @@ if ($publishToRelease) {
     $installerManifest["parts"] = $publishedParts
 
     $assetsVerified = $false
-    $assets = @()
     for ($verificationAttempt = 1; $verificationAttempt -le 30; $verificationAttempt += 1) {
-        $assets = @(Get-ReleaseAssets -ReleaseId $releaseId)
-        $assetsVerified = $assets.Count -eq $partFiles.Count
-        if ($assetsVerified) {
-            foreach ($partFile in $partFiles) {
-                $matchingAssets = @(
-                    $assets | Where-Object {
-                        (Get-ObjectProperty -InputObject $_ -Name "name") -eq $partFile.Name
-                    }
-                )
-                if (
-                    $matchingAssets.Count -ne 1 -or
-                    [long](Get-ObjectProperty `
-                        -InputObject $matchingAssets[0] `
-                        -Name "size") -ne $partFile.Length
-                ) {
-                    $assetsVerified = $false
-                    break
-                }
+        $verifiedAssetCount = 0
+        foreach ($publishedAsset in $publishedAssets) {
+            $actualAsset = Get-ReleaseAsset `
+                -ReleaseId $releaseId `
+                -AssetId $publishedAsset.id
+            if (
+                $null -ne $actualAsset -and
+                [string](Get-ObjectProperty `
+                    -InputObject $actualAsset `
+                    -Name "name") -eq $publishedAsset.name -and
+                [long](Get-ObjectProperty `
+                    -InputObject $actualAsset `
+                    -Name "size") -eq $publishedAsset.size
+            ) {
+                $verifiedAssetCount += 1
             }
         }
+        $assetsVerified = $verifiedAssetCount -eq $publishedAssets.Count
         if ($assetsVerified) {
             break
         }
         Write-Host (
             "Waiting for Gitee release attachments " +
-            "($($assets.Count)/$($partFiles.Count) visible)..."
+            "($verifiedAssetCount/$($publishedAssets.Count) verified by id)..."
         )
         Start-Sleep -Seconds 5
     }
     if (-not $assetsVerified) {
         throw (
             "Gitee release attachment verification timed out: " +
-            "$($assets.Count)/$($partFiles.Count) visible."
+            "$verifiedAssetCount/$($publishedAssets.Count) verified by id."
         )
     }
 } else {
