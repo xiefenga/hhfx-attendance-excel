@@ -197,13 +197,16 @@ function Get-ReleaseAssets {
         [int]$ReleaseId
     )
 
-    return @(
-        Invoke-RestMethod `
-            -Uri "$apiBase/releases/$ReleaseId/attach_files?per_page=100" `
-            -Method Get `
-            -Headers $authorizationHeaders `
-            -TimeoutSec 180
-    )
+    $result = Invoke-RestMethod `
+        -Uri "$apiBase/releases/$ReleaseId/attach_files?per_page=100" `
+        -Method Get `
+        -Headers $authorizationHeaders `
+        -TimeoutSec 180
+    foreach ($asset in @($result)) {
+        if ($null -ne $asset) {
+            Write-Output $asset
+        }
+    }
 }
 
 function Get-ReleaseAsset {
