@@ -32,6 +32,9 @@ $setupFile = $setupFiles[0]
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
 $escapedBranch = [Uri]::EscapeDataString($Branch)
+$authorizationHeaders = @{
+    Authorization = "Bearer $accessToken"
+}
 $manifestPath = "win32/x64/update.json"
 $publishedManifestUrl = (
     "https://gitee.com/$Owner/$Repository/raw/$Branch/$manifestPath"
@@ -149,8 +152,9 @@ function Get-ReleaseByTag {
     $statusCode = 0
     $escapedTag = [Uri]::EscapeDataString($Tag)
     $result = Invoke-RestMethod `
-        -Uri "$apiBase/releases/tags/${escapedTag}?access_token=$escapedToken" `
+        -Uri "$apiBase/releases/tags/$escapedTag" `
         -Method Get `
+        -Headers $authorizationHeaders `
         -SkipHttpErrorCheck `
         -StatusCodeVariable statusCode
     if ($statusCode -eq 404) {
@@ -175,10 +179,10 @@ function Get-OrCreateRelease {
     return Invoke-RestMethod `
         -Uri "$apiBase/releases" `
         -Method Post `
+        -Headers $authorizationHeaders `
         -TimeoutSec 180 `
         -ContentType "application/x-www-form-urlencoded" `
         -Body @{
-            access_token = $accessToken
             tag_name = $Tag
             target_commitish = $Branch
             name = "Attendance Ledger $Tag"
@@ -195,8 +199,9 @@ function Get-ReleaseAssets {
 
     return @(
         Invoke-RestMethod `
-            -Uri "$apiBase/releases/$ReleaseId/attach_files?access_token=$escapedToken&per_page=100" `
+            -Uri "$apiBase/releases/$ReleaseId/attach_files?per_page=100" `
             -Method Get `
+            -Headers $authorizationHeaders `
             -TimeoutSec 180
     )
 }
@@ -212,8 +217,9 @@ function Clear-ReleaseAssets {
         if ($null -ne $assetId) {
             $deleteStatusCode = 0
             Invoke-RestMethod `
-                -Uri "$apiBase/releases/$ReleaseId/attach_files/${assetId}?access_token=$escapedToken" `
+                -Uri "$apiBase/releases/$ReleaseId/attach_files/$assetId" `
                 -Method Delete `
+                -Headers $authorizationHeaders `
                 -SkipHttpErrorCheck `
                 -StatusCodeVariable deleteStatusCode `
                 -TimeoutSec 180 | Out-Null
@@ -245,9 +251,9 @@ function Publish-ReleaseAsset {
             return Invoke-RestMethod `
                 -Uri $endpoint `
                 -Method Post `
+                -Headers $authorizationHeaders `
                 -TimeoutSec 900 `
                 -Form @{
-                    access_token = $accessToken
                     file = $File
                 }
         } catch {
@@ -255,7 +261,8 @@ function Publish-ReleaseAsset {
                 throw
             }
             Write-Warning (
-                "Uploading $($File.Name) failed on attempt $attempt; retrying."
+                "Uploading $($File.Name) failed on attempt $attempt`: " +
+                "$($_.Exception.Message); retrying."
             )
             Start-Sleep -Seconds 5
         }
@@ -273,8 +280,9 @@ function Remove-OtherReleases {
     while ($true) {
         $pageItems = @(
             Invoke-RestMethod `
-                -Uri "$apiBase/releases?access_token=$escapedToken&page=$page&per_page=100&direction=desc" `
+                -Uri "$apiBase/releases?page=$page&per_page=100&direction=desc" `
                 -Method Get `
+                -Headers $authorizationHeaders `
                 -TimeoutSec 180
         )
         foreach ($pageItem in $pageItems) {
@@ -295,8 +303,9 @@ function Remove-OtherReleases {
         Write-Host "Deleting old Gitee release $tagName (id=$releaseId)..."
         $deleteStatusCode = 0
         Invoke-RestMethod `
-            -Uri "$apiBase/releases/${releaseId}?access_token=$escapedToken" `
+            -Uri "$apiBase/releases/$releaseId" `
             -Method Delete `
+            -Headers $authorizationHeaders `
             -SkipHttpErrorCheck `
             -StatusCodeVariable deleteStatusCode `
             -TimeoutSec 180 | Out-Null
