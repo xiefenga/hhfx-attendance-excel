@@ -1,9 +1,15 @@
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = "Publish")]
     [string]$ArtifactsDirectory,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = "Publish")]
     [string]$Version,
+
+    [Parameter(Mandatory = $true, ParameterSetName = "Cleanup")]
+    [switch]$CleanupOnly,
+
+    [Parameter(Mandatory = $true, ParameterSetName = "Cleanup")]
+    [string]$KeepTag,
 
     [string]$Owner = "xf_wwx",
 
@@ -19,15 +25,6 @@ $accessToken = $env:GITEE_TOKEN
 if ([string]::IsNullOrWhiteSpace($accessToken)) {
     throw "GITEE_TOKEN is required."
 }
-
-$resolvedArtifactsDirectory = (Resolve-Path -LiteralPath $ArtifactsDirectory).Path
-$setupFiles = @(
-    Get-ChildItem -LiteralPath $resolvedArtifactsDirectory -File -Filter "*Setup.exe"
-)
-if ($setupFiles.Count -ne 1) {
-    throw "Expected exactly one Squirrel setup executable, found $($setupFiles.Count)."
-}
-$setupFile = $setupFiles[0]
 
 $apiBase = "https://gitee.com/api/v5/repos/$Owner/$Repository"
 $escapedToken = [Uri]::EscapeDataString($accessToken)
@@ -318,15 +315,17 @@ function Remove-OtherReleases {
     $releases = [Collections.Generic.List[object]]::new()
     $page = 1
     while ($true) {
-        $pageItems = @(
-            Invoke-RestMethod `
-                -Uri "$apiBase/releases?page=$page&per_page=100&direction=desc" `
-                -Method Get `
-                -Headers $authorizationHeaders `
-                -TimeoutSec 180
-        )
-        foreach ($pageItem in $pageItems) {
-            $releases.Add($pageItem)
+        $pageResult = Invoke-RestMethod `
+            -Uri "$apiBase/releases?page=$page&per_page=100&direction=desc" `
+            -Method Get `
+            -Headers $authorizationHeaders `
+            -TimeoutSec 180
+        $pageItems = [Collections.Generic.List[object]]::new()
+        foreach ($pageItem in $pageResult) {
+            if ($null -ne $pageItem) {
+                $pageItems.Add($pageItem)
+                $releases.Add($pageItem)
+            }
         }
         if ($pageItems.Count -lt 100) {
             break
@@ -340,6 +339,8 @@ function Remove-OtherReleases {
             continue
         }
         $tagName = [string](Get-ObjectProperty -InputObject $release -Name "tag_name")
+        Write-Host "Clearing old Gitee release $tagName (id=$releaseId) attachments..."
+        Clear-ReleaseAssets -ReleaseId $releaseId
         Write-Host "Deleting old Gitee release $tagName (id=$releaseId)..."
         $deleteStatusCode = 0
         Invoke-RestMethod `
@@ -349,9 +350,7 @@ function Remove-OtherReleases {
             -SkipHttpErrorCheck `
             -StatusCodeVariable deleteStatusCode `
             -TimeoutSec 180 | Out-Null
-        if ($deleteStatusCode -eq 404) {
-            Write-Host "Old Gitee release $tagName is already absent."
-        } elseif ($deleteStatusCode -lt 200 -or $deleteStatusCode -ge 300) {
+        if ($deleteStatusCode -lt 200 -or $deleteStatusCode -ge 300) {
             throw "Deleting Gitee release $tagName failed with HTTP $deleteStatusCode."
         }
     }
@@ -388,6 +387,31 @@ function Assert-ManifestMatches {
         }
     }
 }
+
+if ($CleanupOnly) {
+    if ($KeepTag -notmatch "^v[0-9A-Za-z][0-9A-Za-z._-]*$") {
+        throw "KeepTag must be a valid version tag beginning with v."
+    }
+    $keptRelease = Get-ReleaseByTag -Tag $KeepTag
+    if ($null -eq $keptRelease) {
+        throw "Gitee release $KeepTag does not exist."
+    }
+    $keptReleaseId = [int](
+        Get-ObjectProperty -InputObject $keptRelease -Name "id"
+    )
+    Remove-OtherReleases -CurrentReleaseId $keptReleaseId
+    Write-Host "Only Gitee release $KeepTag is retained."
+    exit 0
+}
+
+$resolvedArtifactsDirectory = (Resolve-Path -LiteralPath $ArtifactsDirectory).Path
+$setupFiles = @(
+    Get-ChildItem -LiteralPath $resolvedArtifactsDirectory -File -Filter "*Setup.exe"
+)
+if ($setupFiles.Count -ne 1) {
+    throw "Expected exactly one Squirrel setup executable, found $($setupFiles.Count)."
+}
+$setupFile = $setupFiles[0]
 
 $publishedManifestStatusCode = 0
 $publishedManifest = Invoke-RestMethod `
