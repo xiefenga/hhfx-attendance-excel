@@ -89,8 +89,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Windows x64 的 Actions artifact 和 GitHub Release 只包含
-`Attendance-Ledger-Windows-x64.zip`；解压后双击根目录的安装脚本即可首次安装或升级应用。
+Windows x64 的 GitHub Release 只发布单文件安装器
+`Attendance Ledger Installer.exe`，安装人员只需双击该文件。Actions artifact 同时
+保留 ZIP，供开发和故障诊断使用。
 
 Windows 正式签名使用工作流中声明的 Windows 仓库 Secrets。
 

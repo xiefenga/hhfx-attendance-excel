@@ -47,9 +47,13 @@ $pfx = "$env:USERPROFILE\Documents\AttendanceLedgerSigning\attendance-ledger-sig
 
 工作流会把证书写入 runner 临时目录。Electron Packager 递归签署应用主程序、DLL、Node
 原生模块和 `attendance-worker.exe`，Squirrel maker 再签署安装器。构建完成后，工作流会
-验证主程序、sidecar 和 `Setup.exe` 的签名及证书指纹，并在 Windows artifact 中生成
-可以直接分发的 `Attendance-Ledger-Windows-x64.zip`。GitHub Actions artifact 和
-GitHub Release 都只发布这个 Windows ZIP，不再附带松散的 Squirrel 文件。
+验证主程序、sidecar 和 `Setup.exe` 的签名及证书指纹，并在 Windows artifact 中生成：
+
+- `Attendance Ledger Installer.exe`：GitHub Release 发布的单文件安装器；
+- `Attendance-Ledger-Windows-x64.zip`：仅在 Actions artifact 中保留的诊断备用包。
+
+单文件安装器内嵌整个 ZIP，运行时释放到独立临时目录并调用同一份安装脚本，完成后自动
+清理，因此 EXE 和 ZIP 不会形成两套不同的安装逻辑。
 
 CI 读取 PFX 时会显式传入密码，不会等待交互输入，也不会尝试修改 GitHub runner 的证书
 信任库。自签名证书在 CI 中可能返回 `NotTrusted` 或 `UnknownError`，但签名证书必须存在
@@ -73,7 +77,7 @@ Remove-Item Env:WINDOWS_CERTIFICATE_PASSWORD
 Remove-Item Env:WINDOWS_CERTIFICATE_FILE
 ```
 
-## 四、生成内部安装 ZIP
+## 四、生成内部安装文件
 
 找到 `out\make\` 下生成的 `*Setup.exe`，执行：
 
@@ -102,13 +106,29 @@ Attendance-Ledger-Windows-x64/
 归档内 7 个文件的精确路径和数量。版本文件用于区分首次安装、同版本重复执行、升级和
 降级。ZIP 只包含公钥证书，不包含 PFX 或私钥。
 
+再将 ZIP 嵌入并签名为单文件安装器：
+
+```powershell
+.\packaging\windows\New-InternalInstaller.ps1 `
+  -ArchivePath ".\out\Attendance-Ledger-Windows-x64.zip" `
+  -CertificatePath $env:WINDOWS_CERTIFICATE_FILE `
+  -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD `
+  -OutputPath ".\out\Attendance Ledger Installer.exe"
+```
+
+PFX 只用于给最终 EXE 签名，不会被嵌入安装器；EXE 中仍然只有 ZIP 内的公钥证书。
+
 ## 五、在目标电脑首次安装
 
-1. 通过 U 盘或可信的公司内部共享目录复制 ZIP，并完整解压到任意位置。
-2. 双击 `Install Attendance Ledger.cmd`。
+1. 通过 U 盘或可信的公司内部共享目录复制 `Attendance Ledger Installer.exe`。
+2. 双击这个 EXE，无需解压或选择内部文件。
 3. 接受一次 Windows 管理员权限提示。
-4. 脚本检查证书用途和指纹，将证书加入本机信任，并验证安装器确实由该证书签名。
-5. 验证通过后自动启动 Squirrel 安装程序。
+4. 单文件安装器自动释放内嵌文件，脚本检查证书用途和指纹，将证书加入本机信任，并验证
+   Squirrel 安装器确实由该证书签名。
+5. 验证通过后静默完成安装并自动清理临时文件。
+
+如果单文件安装器受目标电脑安全策略限制，可改用 ZIP 中的
+`Install Attendance Ledger.cmd` 作为诊断入口。
 
 ## 六、手动升级
 
@@ -120,12 +140,13 @@ git tag v0.1.4
 git push origin v0.1.4
 ```
 
-在目标电脑下载并完整解压新版本 ZIP，再次双击 `Install Attendance Ledger.cmd`：
+在目标电脑下载新版本单文件安装器并再次双击：
 
 - 未找到现有版本时执行首次安装；
-- 新版本高于现有版本时执行覆盖升级；
-- 新旧版本相同时提示已经安装并退出；
-- 新版本低于现有版本时拒绝降级；
+- 现有安装完整且版本较旧时执行静默升级；
+- 现有版本相同或更高且文件完整时，仅检查和修复快捷方式；
+- 现有安装残缺时清理程序残留并重新安装；
+- 正常安装失败时自动彻底清理并重试一次；
 - 使用同一签名证书且证书仍在两个本机信任存储中时，不重复导入证书，也不请求管理员权限；
 - 证书缺失或轮换时，才请求管理员权限并部署新证书。
 
@@ -136,7 +157,8 @@ https://gitee.com/xf_wwx/attendance-ledger-updates/raw/master/win32/x64
 ```
 
 应用启动后检查一次，此后每小时检查一次。发现新版本后会在后台下载，并提示用户重启
-完成安装。GitHub Release 中的内部安装 ZIP 仍保留，可在自动更新不可用时手工升级。
+完成安装。GitHub Release 中的单文件安装器可用于手工升级，ZIP 继续在 Actions
+artifact 中保留用于诊断。
 
 推送 `v*` 标签时，Release 工作流使用 GitHub Secret `GITEE_TOKEN` 在 Gitee 更新仓库中：
 

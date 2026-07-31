@@ -136,4 +136,4 @@ finally {
 }
 
 Write-Host "Internal release ZIP created: $resolvedArchivePath" -ForegroundColor Green
-Write-Host "Distribute this ZIP only. It contains no private PFX."
+Write-Host "The ZIP contains no private PFX and can be embedded into the single-file installer."

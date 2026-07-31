@@ -362,6 +362,8 @@ if ($certificateInstallRequired -and -not $isAdministrator) {
     Write-Host "The signing certificate is not trusted yet. Administrator approval is required once."
     $arguments = @(
         "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
