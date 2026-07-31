@@ -75,51 +75,35 @@ function ConvertTo-ApplicationVersion {
     return $parsedVersion
 }
 
-function Get-InstalledApplicationVersion {
+function Get-ApplicationState {
+    $applicationRoot = Join-Path $env:LOCALAPPDATA "attendance_ledger"
+    $uninstallPath = "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\attendance_ledger"
     $versions = [System.Collections.Generic.List[System.Version]]::new()
-    $uninstallRoot = "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall"
-    if (Test-Path -LiteralPath $uninstallRoot) {
-        foreach ($entry in Get-ChildItem -LiteralPath $uninstallRoot) {
-            $properties = Get-ItemProperty `
-                -LiteralPath $entry.PSPath `
-                -ErrorAction SilentlyContinue
-            if ($null -eq $properties) {
-                continue
-            }
-            $displayNameProperty = $properties.PSObject.Properties["DisplayName"]
-            $displayVersionProperty = $properties.PSObject.Properties["DisplayVersion"]
-            $displayName = if ($null -eq $displayNameProperty) {
-                ""
-            }
-            else {
-                [string]$displayNameProperty.Value
-            }
-            if (
-                $entry.PSChildName -ne "attendance_ledger" -and
-                $displayName -ne "Attendance Ledger"
-            ) {
-                continue
-            }
-            [Version]$registryVersion = $null
-            if (
-                $null -ne $displayVersionProperty -and
-                [Version]::TryParse(
-                    ([string]$displayVersionProperty.Value).Trim(),
-                    [ref]$registryVersion
-                )
-            ) {
-                $versions.Add($registryVersion)
-            }
+    $versionDirectories = @{}
+
+    if (Test-Path -LiteralPath $uninstallPath) {
+        $displayVersion = (
+            Get-ItemProperty -LiteralPath $uninstallPath -ErrorAction SilentlyContinue
+        ).DisplayVersion
+        [Version]$registryVersion = $null
+        if (
+            $null -ne $displayVersion -and
+            [Version]::TryParse(
+                ([string]$displayVersion).Trim(),
+                [ref]$registryVersion
+            )
+        ) {
+            $versions.Add($registryVersion)
         }
     }
 
-    $applicationRoot = Join-Path $env:LOCALAPPDATA "attendance_ledger"
     if (Test-Path -LiteralPath $applicationRoot -PathType Container) {
         foreach (
             $directory in Get-ChildItem `
                 -LiteralPath $applicationRoot `
                 -Directory `
-                -Filter "app-*"
+                -Filter "app-*" `
+                -ErrorAction SilentlyContinue
         ) {
             [Version]$directoryVersion = $null
             if (
@@ -129,14 +113,177 @@ function Get-InstalledApplicationVersion {
                 )
             ) {
                 $versions.Add($directoryVersion)
+                $versionDirectories[$directoryVersion.ToString()] = $directory.FullName
             }
         }
     }
 
+    $hasResidue = (
+        (Test-Path -LiteralPath $applicationRoot) -or
+        (Test-Path -LiteralPath $uninstallPath)
+    )
     if ($versions.Count -eq 0) {
-        return $null
+        return [pscustomobject]@{
+            Version = $null
+            IsComplete = $false
+            HasResidue = $hasResidue
+            MissingPaths = @()
+        }
     }
-    return @($versions | Sort-Object -Descending)[0]
+
+    [Version]$installedVersion = @($versions | Sort-Object -Descending)[0]
+    $versionKey = $installedVersion.ToString()
+    $versionDirectory = $versionDirectories[$versionKey]
+    $requiredPaths = @((Join-Path $applicationRoot "Update.exe"))
+    if ($null -eq $versionDirectory) {
+        $requiredPaths += Join-Path $applicationRoot "app-$versionKey"
+    }
+    else {
+        $requiredPaths += @(
+            (Join-Path $versionDirectory "attendance-ledger.exe"),
+            (Join-Path $versionDirectory "resources\app.asar"),
+            (Join-Path $versionDirectory "resources\attendance-worker\attendance-worker.exe")
+        )
+    }
+    $missingPaths = @(
+        $requiredPaths |
+            Where-Object {
+                -not (Test-Path -LiteralPath $_ -PathType Leaf)
+            }
+    )
+
+    return [pscustomobject]@{
+        Version = $installedVersion
+        IsComplete = $missingPaths.Count -eq 0
+        HasResidue = $hasResidue
+        MissingPaths = $missingPaths
+    }
+}
+
+function Stop-ApplicationProcesses {
+    $applicationRoot = Join-Path $env:LOCALAPPDATA "attendance_ledger"
+    $processNames = @(
+        "attendance-ledger",
+        "attendance-worker",
+        "Attendance Ledger Setup",
+        "Update"
+    )
+    foreach (
+        $process in Get-Process `
+            -Name $processNames `
+            -ErrorAction SilentlyContinue
+    ) {
+        if ($process.Name -eq "Update") {
+            try {
+                if (
+                    -not ([string]$process.Path).StartsWith(
+                        "$applicationRoot\",
+                        [StringComparison]::OrdinalIgnoreCase
+                    )
+                ) {
+                    continue
+                }
+            }
+            catch {
+                continue
+            }
+        }
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 500
+}
+
+function Remove-PathWithRetry {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    for ($attempt = 1; $attempt -le 4; $attempt += 1) {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force
+            return
+        }
+        catch {
+            if ($attempt -eq 4) {
+                throw
+            }
+            Stop-ApplicationProcesses
+        }
+    }
+}
+
+function Clear-ApplicationInstallation {
+    $applicationRoot = Join-Path $env:LOCALAPPDATA "attendance_ledger"
+    $uninstallPath = "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\attendance_ledger"
+    Stop-ApplicationProcesses
+    Remove-PathWithRetry -Path $applicationRoot
+    Remove-Item `
+        -LiteralPath $uninstallPath `
+        -Recurse `
+        -Force `
+        -ErrorAction SilentlyContinue
+
+    foreach ($shortcutPath in @(
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Attendance Ledger.lnk"),
+        (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Attendance Ledger.lnk")
+    )) {
+        Remove-Item `
+            -LiteralPath $shortcutPath `
+            -Force `
+            -ErrorAction SilentlyContinue
+    }
+
+    Remove-PathWithRetry `
+        -Path (Join-Path $env:LOCALAPPDATA "SquirrelTemp")
+    foreach (
+        $lockPath in Get-ChildItem `
+            -LiteralPath $env:LOCALAPPDATA `
+            -Filter "Temp.squirrel-lock-*" `
+            -Force `
+            -ErrorAction SilentlyContinue
+    ) {
+        Remove-PathWithRetry -Path $lockPath.FullName
+    }
+}
+
+function Ensure-ApplicationShortcut {
+    param(
+        [Parameter(Mandatory)]
+        [Version]$Version
+    )
+
+    $desktopShortcut = Join-Path `
+        ([Environment]::GetFolderPath("Desktop")) `
+        "Attendance Ledger.lnk"
+    if (Test-Path -LiteralPath $desktopShortcut -PathType Leaf) {
+        return
+    }
+
+    $applicationRoot = Join-Path $env:LOCALAPPDATA "attendance_ledger"
+    $updatePath = Join-Path $applicationRoot "Update.exe"
+    & $updatePath "--createShortcut=attendance-ledger.exe"
+    if (Test-Path -LiteralPath $desktopShortcut -PathType Leaf) {
+        return
+    }
+
+    $executablePath = Join-Path `
+        $applicationRoot `
+        "app-$($Version.ToString())\attendance-ledger.exe"
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($desktopShortcut)
+        $shortcut.TargetPath = $executablePath
+        $shortcut.WorkingDirectory = Split-Path -Parent $executablePath
+        $shortcut.IconLocation = "$executablePath,0"
+        $shortcut.Save()
+    }
+    catch {
+        Write-Warning "The application is installed, but its desktop shortcut could not be created."
+    }
 }
 
 $targetVersion = ConvertTo-ApplicationVersion `
@@ -194,17 +341,6 @@ if (
     $signature.SignerCertificate.Thumbprint -ne $certificate.Thumbprint
 ) {
     throw "The installer was not signed by the expected certificate. Installation stopped."
-}
-
-$installedVersion = Get-InstalledApplicationVersion
-if ($null -ne $installedVersion) {
-    if ($targetVersion -lt $installedVersion) {
-        throw "Downgrade is not supported. Installed version: $installedVersion; package version: $targetVersion."
-    }
-    if ($targetVersion -eq $installedVersion) {
-        Write-Host "Attendance Ledger $targetVersion is already installed. No update is required." -ForegroundColor Green
-        return
-    }
 }
 
 $rootCertificatePath = "Cert:\LocalMachine\Root\$($certificate.Thumbprint)"
@@ -285,15 +421,78 @@ if ($InstallCertificateOnly) {
     return
 }
 
-if ($null -eq $installedVersion) {
-    Write-Host "Certificate and installer signature verified. Installing Attendance Ledger $targetVersion..." -ForegroundColor Green
-}
-else {
-    Write-Host "Certificate and installer signature verified. Updating Attendance Ledger $installedVersion to $targetVersion..." -ForegroundColor Green
-}
-$installer = Start-Process -FilePath $InstallerPath -Wait -PassThru
-if ($installer.ExitCode -ne 0) {
-    throw "The installer exited with code $($installer.ExitCode)."
+$installedState = Get-ApplicationState
+if ($null -ne $installedState.Version -and $installedState.IsComplete) {
+    if ($targetVersion -le $installedState.Version) {
+        Ensure-ApplicationShortcut -Version $installedState.Version
+        Write-Host "Attendance Ledger $($installedState.Version) is already installed and verified." -ForegroundColor Green
+        return
+    }
 }
 
-Write-Host "Attendance Ledger $targetVersion installation completed." -ForegroundColor Green
+$cleanFirst = $installedState.HasResidue -and -not $installedState.IsComplete
+$maximumAttempts = 2
+$installationCompleted = $false
+$lastInstallerExitCode = $null
+$lastInstallerError = ""
+$lastState = $installedState
+
+for ($attempt = 1; $attempt -le $maximumAttempts; $attempt += 1) {
+    if ($cleanFirst -or $attempt -gt 1) {
+        Write-Host "Cleaning incomplete installation state..."
+        Clear-ApplicationInstallation
+    }
+    else {
+        Stop-ApplicationProcesses
+    }
+
+    try {
+        $installer = Start-Process `
+            -FilePath $InstallerPath `
+            -ArgumentList "--silent" `
+            -Wait `
+            -PassThru
+        $lastInstallerExitCode = $installer.ExitCode
+        $lastInstallerError = ""
+    }
+    catch {
+        $lastInstallerExitCode = $null
+        $lastInstallerError = $_.Exception.Message
+    }
+
+    if ($lastInstallerExitCode -eq 0) {
+        for ($check = 0; $check -lt 20; $check += 1) {
+            $lastState = Get-ApplicationState
+            if (
+                $lastState.Version -eq $targetVersion -and
+                $lastState.IsComplete
+            ) {
+                $installationCompleted = $true
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if ($installationCompleted) {
+        break
+    }
+    if ($attempt -lt $maximumAttempts) {
+        Write-Warning "Installation was incomplete. A clean installation will be retried once."
+    }
+}
+
+if (-not $installationCompleted) {
+    if (-not [string]::IsNullOrWhiteSpace($lastInstallerError)) {
+        Write-Host "Installer start error: $lastInstallerError" -ForegroundColor Yellow
+    }
+    elseif ($null -ne $lastInstallerExitCode) {
+        Write-Host "Installer exit code: $lastInstallerExitCode" -ForegroundColor Yellow
+    }
+    foreach ($missingPath in $lastState.MissingPaths) {
+        Write-Host "Missing: $missingPath" -ForegroundColor Yellow
+    }
+    throw "Installation failed twice. Check %LOCALAPPDATA%\SquirrelTemp\SquirrelSetup.log and Windows Security protection history."
+}
+
+Ensure-ApplicationShortcut -Version $targetVersion
+Write-Host "Attendance Ledger $targetVersion installation completed and verified." -ForegroundColor Green

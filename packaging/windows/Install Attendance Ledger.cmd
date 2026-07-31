@@ -17,6 +17,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%INSTALL_SCRIPT%"
 if errorlevel 1 (
   echo.
   echo Installation or update failed. Review the error above.
+  echo Squirrel logs are normally under:
+  echo   %%LOCALAPPDATA%%\SquirrelTemp\SquirrelSetup.log
+  echo   %%LOCALAPPDATA%%\attendance_ledger\SquirrelSetup.log
+  echo Also check Windows Security protection history.
   pause
   exit /b 1
 )
