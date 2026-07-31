@@ -297,7 +297,6 @@ function FileCard({
   onSelect(): void;
 }) {
   const label = FILE_LABELS[kind];
-  const employeeCount = validation.result?.employee_count ?? null;
 
   return (
     <article
@@ -306,11 +305,6 @@ function FileCard({
     >
       <div className="file-card-head">
         <h2>{label}</h2>
-        <p>
-          {kind === "punch"
-            ? "读取每日上下班打卡时间"
-            : "核对人员与月度考勤状态"}
-        </p>
       </div>
 
       <div className="file-state" aria-live="polite">
@@ -338,18 +332,16 @@ function FileCard({
                   </span>
                 </div>
               ) : (
-                <span className="file-meta">
-                  {validation.status === "validating"
-                    ? `${formatFileSize(file.size)} · 正在校验…`
-                    : employeeCount === null
-                      ? `${formatFileSize(file.size)} · 等待校验`
-                      : `已校验 · ${employeeCount} 人`}
-                </span>
+                validation.status === "validating" ? (
+                  <span className="file-meta">
+                    {formatFileSize(file.size)} · 正在校验…
+                  </span>
+                ) : null
               )}
             </div>
           </div>
         ) : (
-          <span className="empty-state">尚未选择 · 支持钉钉导出的 .xlsx 文件</span>
+          <span className="empty-state">尚未选择</span>
         )}
       </div>
 
@@ -647,6 +639,10 @@ export default function App() {
               <span>{buttonLabel}</span>
             </button>
           </div>
+
+          <footer className="version-footer" aria-label={`当前版本 v${__APP_VERSION__}`}>
+            v{__APP_VERSION__}
+          </footer>
         </section>
       </main>
 

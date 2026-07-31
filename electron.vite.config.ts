@@ -1,5 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
+import packageMetadata from "./package.json";
 
 export default defineConfig(({ command }) => {
   const isDevelopment = command === "serve";
@@ -15,6 +16,9 @@ export default defineConfig(({ command }) => {
     preload: {},
     renderer: {
       base: "./",
+      define: {
+        __APP_VERSION__: JSON.stringify(packageMetadata.version)
+      },
       build: {
         minify: "esbuild"
       },
