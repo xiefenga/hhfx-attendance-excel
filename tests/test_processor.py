@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from attendance_core.monthly import derive_half_day_statuses, parse_report_range_text
+from attendance_core.monthly import (
+    MonthlyEmployee,
+    derive_half_day_statuses,
+    employee_leave_days,
+    parse_report_range_text,
+)
 from attendance_core.processor import (
     assign_punch_base_date,
     expand_cell_timeline,
@@ -76,6 +81,81 @@ def test_monthly_half_day_status_uses_official_period_overlap() -> None:
     assert derive_half_day_statuses("出差\n(-,-)", current, "工作日") == ("√", "√")
     assert derive_half_day_statuses("外出\n(-,-)", current, "工作日") == ("√", "√")
     assert derive_half_day_statuses("外勤\n(-,-)", current, "工作日") == ("√", "√")
+
+
+def test_hourly_leave_totals_are_counted_from_half_day_intervals() -> None:
+    display_dates = [
+        date(2026, 7, 10) + timedelta(days=offset)
+        for offset in range(8)
+    ]
+    date_headers = {
+        current_date: (
+            "六"
+            if current_date.weekday() == 5
+            else "日"
+            if current_date.weekday() == 6
+            else str(current_date.day)
+        )
+        for current_date in display_dates
+    }
+    employee = MonthlyEmployee(
+        name="测试员工",
+        department="测试部门",
+        employee_id="001",
+        user_id="U001",
+        leave_totals={
+            "事假": 51,
+            "调休": 4,
+            "病假": 4,
+            "哺乳假": 4,
+            "年假": 1,
+        },
+        daily_results={
+            current_date: (
+                "事假07-10 09:00到07-15 18:00 4天\n(-)"
+                if current_date <= date(2026, 7, 15)
+                else "事假07-16 08:30到07-17 18:00 2天\n(-)"
+            )
+            for current_date in display_dates
+        },
+    )
+
+    leave_days = employee_leave_days(employee, display_dates, date_headers)
+
+    assert leave_days["事假"] == 6
+    assert leave_days["调休"] == 0
+    assert leave_days["病假"] == 0
+    assert leave_days["哺乳假"] == 0
+    assert leave_days["年假"] == 1
+
+
+def test_hourly_leave_counts_each_matching_period_as_half_day() -> None:
+    morning_date = date(2026, 7, 20)
+    afternoon_date = date(2026, 7, 21)
+    inactive_date = date(2026, 7, 22)
+    display_dates = [morning_date, afternoon_date, inactive_date]
+    employee = MonthlyEmployee(
+        name="测试员工",
+        department="测试部门",
+        employee_id="001",
+        user_id="U001",
+        leave_totals={"事假": 12, "病假": 4},
+        daily_results={
+            morning_date: "事假07-20 08:30到07-20 13:15 0.5天\n(-,18:00)",
+            afternoon_date: "病假07-21 13:15到07-21 18:00 0.5天\n(08:20,-)",
+            inactive_date: "事假07-22 08:30到07-22 18:00 1天\n(-)",
+        },
+    )
+
+    leave_days = employee_leave_days(
+        employee,
+        display_dates,
+        {current_date: str(current_date.day) for current_date in display_dates},
+        {inactive_date: "已离职"},
+    )
+
+    assert leave_days["事假"] == 0.5
+    assert leave_days["病假"] == 0.5
 
 
 def test_monthly_half_day_status_marks_non_workdays() -> None:

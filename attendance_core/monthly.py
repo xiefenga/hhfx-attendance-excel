@@ -31,6 +31,7 @@ LEAVE_PATTERN = re.compile(
 PUNCH_RESULT_PATTERN = re.compile(r"\(([^()]*)\)\s*$")
 ANOMALY_STATUSES = {"迟到", "缺卡", "早退", "旷工", "异常"}
 EMPLOYMENT_STATUSES = {"未入职", "已离职"}
+HALF_DAY_LEAVE_TYPES = {"事假", "调休", "病假", "哺乳假"}
 
 
 @dataclass
@@ -298,12 +299,47 @@ def derive_half_day_statuses(
     return morning_leave or morning, afternoon_leave or afternoon
 
 
-def employee_leave_days(employee: MonthlyEmployee) -> dict[str, float]:
-    hourly_types = {"事假", "调休", "病假", "哺乳假"}
-    return {
-        leave_type: round(value / 8 if leave_type in hourly_types else value, 2)
-        for leave_type, value in employee.leave_totals.items()
-    }
+def employee_leave_days(
+    employee: MonthlyEmployee,
+    display_dates: list[date],
+    date_headers: dict[date, object],
+    employment_statuses: dict[date, str] | None = None,
+) -> dict[str, float]:
+    leave_days = dict(employee.leave_totals)
+    for leave_type in HALF_DAY_LEAVE_TYPES:
+        leave_days[leave_type] = 0.0
+
+    inactive_dates = employment_statuses or {}
+    for current_date in display_dates:
+        if day_type_for_header(date_headers.get(current_date)) != "工作日":
+            continue
+        if inactive_dates.get(current_date) in EMPLOYMENT_STATUSES:
+            continue
+
+        intervals = parse_leave_intervals(
+            employee.daily_results.get(current_date, ""),
+            current_date,
+        )
+        periods = (
+            (
+                datetime.combine(current_date, time(8, 30)),
+                datetime.combine(current_date, time(12, 0)),
+            ),
+            (
+                datetime.combine(current_date, time(13, 30)),
+                datetime.combine(current_date, time(18, 0)),
+            ),
+        )
+        for period_start, period_end in periods:
+            matched_leave_type = leave_status_for_period(
+                intervals,
+                period_start,
+                period_end,
+            )
+            if matched_leave_type in HALF_DAY_LEAVE_TYPES:
+                leave_days[matched_leave_type] += 0.5
+
+    return leave_days
 
 
 def value_or_blank(value: float) -> float | str:
@@ -442,7 +478,18 @@ def write_attendance_summary_sheet(
         )
 
         computed = computed_by_user_id.get(employee.user_id, {})
-        leave_days = employee_leave_days(employee)
+        daily_employment_statuses = computed.get("daily_employment_statuses")
+        employment_statuses = (
+            daily_employment_statuses
+            if isinstance(daily_employment_statuses, dict)
+            else {}
+        )
+        leave_days = employee_leave_days(
+            employee,
+            display_dates,
+            date_headers,
+            employment_statuses,
+        )
         other_leave_days = sum(
             leave_days.get(leave_type, 0.0)
             for leave_type in ("陪产假", "婚假", "例假", "丧假", "哺乳假", "高温假")
@@ -468,12 +515,6 @@ def write_attendance_summary_sheet(
         ws.cell(row=afternoon_row, column=14, value="下午")
 
         anomaly_notes: list[str] = []
-        daily_employment_statuses = computed.get("daily_employment_statuses")
-        employment_statuses = (
-            daily_employment_statuses
-            if isinstance(daily_employment_statuses, dict)
-            else {}
-        )
         for col, current_date in enumerate(display_dates, start=date_start_col):
             day_type = day_type_for_header(date_headers.get(current_date))
             employment_status = employment_statuses.get(current_date)
@@ -494,11 +535,11 @@ def write_attendance_summary_sheet(
                 )
             else:
                 morning, afternoon = "", ""
-            for row, status, period in (
+            for status_row, status, period in (
                 (morning_row, morning, "上午"),
                 (afternoon_row, afternoon, "下午"),
             ):
-                cell = ws.cell(row=row, column=col, value=status)
+                cell = ws.cell(row=status_row, column=col, value=status)
                 cell.font = normal_font
                 if status in EMPLOYMENT_STATUSES:
                     cell.font = employment_font
@@ -520,8 +561,13 @@ def write_attendance_summary_sheet(
     thin = Side(style="thin", color="000000")
     border = Border(top=thin, bottom=thin, left=thin, right=thin)
     last_data_row = 4 + len(monthly.employees) * 2
-    for row in ws.iter_rows(min_row=3, max_row=last_data_row, min_col=1, max_col=signature_col):
-        for cell in row:
+    for worksheet_row in ws.iter_rows(
+        min_row=3,
+        max_row=last_data_row,
+        min_col=1,
+        max_col=signature_col,
+    ):
+        for cell in worksheet_row:
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if cell.row in {3, 4}:
