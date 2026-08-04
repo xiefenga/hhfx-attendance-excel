@@ -162,7 +162,7 @@ def test_monthly_half_day_status_marks_non_workdays() -> None:
     current = date(2026, 6, 14)
     punches = [datetime.combine(current, time(9, 0))]
 
-    for day_type in ("周六", "周日", "周末", "端午节"):
+    for day_type in ("周六", "周日", "周末"):
         assert derive_half_day_statuses("休息\n(-,-)", current, day_type) == (
             "○",
             "○",
@@ -182,9 +182,26 @@ def test_monthly_half_day_status_marks_non_workdays() -> None:
             day_type,
             punches,
         ) == (
-            "√",
-            "√",
+            "○",
+            "○",
         )
+
+    assert derive_half_day_statuses(
+        "休息并打卡\n(09:00,12:00)", current, "周日"
+    ) == ("√", "○")
+    assert derive_half_day_statuses(
+        "休息并打卡\n(14:00,17:00)", current, "周日"
+    ) == ("○", "√")
+    assert derive_half_day_statuses(
+        "休息并打卡\n(09:00,17:00)", current, "周日"
+    ) == ("√", "√")
+    assert derive_half_day_statuses(
+        "休息并打卡\n(17:00,21:00)", current, "周日"
+    ) == ("○", "○")
+
+    assert derive_half_day_statuses(
+        "休息\n(-,-)", current, "端午节", punches
+    ) == ("√", "√")
 
 
 def test_generated_summary_marks_non_workdays_without_punches_as_circles(

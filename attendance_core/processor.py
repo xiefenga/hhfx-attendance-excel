@@ -22,6 +22,8 @@ from attendance_core.models import (
 from attendance_core.monthly import (
     MonthlyEmployee,
     MonthlyWorkbook,
+    WEEKEND_AFTERNOON_PERIOD,
+    WEEKEND_MORNING_PERIOD,
     parse_monthly_workbook,
     write_attendance_summary_sheet,
 )
@@ -379,8 +381,8 @@ def weekend_overtime(punches: list[datetime], base_date: date) -> tuple[float, b
     first_dt = min(punches)
     last_dt = max(punches)
     overtime_periods = [
-        (time(9, 0), time(12, 0), 3.0),
-        (time(14, 0), time(17, 0), 3.0),
+        (*WEEKEND_MORNING_PERIOD, 3.0),
+        (*WEEKEND_AFTERNOON_PERIOD, 3.0),
         (time(17, 0), time(21, 0), 2.0),
     ]
     overtime_hours = sum(

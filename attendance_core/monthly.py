@@ -32,6 +32,9 @@ PUNCH_RESULT_PATTERN = re.compile(r"\(([^()]*)\)\s*$")
 ANOMALY_STATUSES = {"迟到", "缺卡", "早退", "旷工", "异常"}
 EMPLOYMENT_STATUSES = {"未入职", "已离职"}
 HALF_DAY_LEAVE_TYPES = {"事假", "调休", "病假", "哺乳假"}
+WEEKEND_DAY_TYPES = {"周六", "周日", "周末"}
+WEEKEND_MORNING_PERIOD = (time(9, 0), time(12, 0))
+WEEKEND_AFTERNOON_PERIOD = (time(14, 0), time(17, 0))
 
 
 @dataclass
@@ -224,12 +227,62 @@ def parse_result_punches(raw_result: str) -> tuple[bool, bool]:
     return first_present, last_present
 
 
+def parse_result_punch_datetimes(
+    raw_result: str, current_date: date
+) -> list[datetime]:
+    match = PUNCH_RESULT_PATTERN.search(raw_result)
+    if not match:
+        return []
+
+    punch_times = [
+        time.fromisoformat(value)
+        for value in re.findall(r"(?:[01]\d|2[0-3]):[0-5]\d", match.group(1))
+    ]
+    punches: list[datetime] = []
+    punch_date = current_date
+    previous_time: time | None = None
+    for punch_time in punch_times:
+        if previous_time is not None and punch_time < previous_time:
+            punch_date += timedelta(days=1)
+        punches.append(datetime.combine(punch_date, punch_time))
+        previous_time = punch_time
+    return punches
+
+
+def covers_period(
+    punches: list[datetime], current_date: date, period: tuple[time, time]
+) -> bool:
+    if not punches:
+        return False
+    period_start, period_end = period
+    return min(punches) <= datetime.combine(
+        current_date, period_start
+    ) and max(punches) >= datetime.combine(current_date, period_end)
+
+
 def derive_half_day_statuses(
     raw_result: str,
     current_date: date,
     day_type: str,
     actual_punches: list[datetime] | None = None,
 ) -> tuple[str, str]:
+    if day_type in WEEKEND_DAY_TYPES:
+        if actual_punches is not None:
+            punches = actual_punches
+        else:
+            punches = parse_result_punch_datetimes(raw_result, current_date)
+        morning = (
+            "√"
+            if covers_period(punches, current_date, WEEKEND_MORNING_PERIOD)
+            else "○"
+        )
+        afternoon = (
+            "√"
+            if covers_period(punches, current_date, WEEKEND_AFTERNOON_PERIOD)
+            else "○"
+        )
+        return morning, afternoon
+
     if day_type != "工作日":
         if actual_punches is not None:
             has_punch = bool(actual_punches)
